@@ -10,6 +10,12 @@ local StarterPlayer = game:GetService("StarterPlayer")
 local VirtualUser = game:GetService("VirtualUser")
 local LP = Players.LocalPlayer
 
+local Window = Rayfield:CreateWindow({
+Name ="Violence District"
+LoadingTitle = "Violence District"
+loadingSubtitle = "By Lorenzo"
+})
+
 -- Pestaña Visual (Simplificada: Solo toggles para Players y Generators)
 local TabVisual = Window:CreateTab("Visual")
 TabVisual:CreateSection("ESP")

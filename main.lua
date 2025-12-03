@@ -10,6 +10,14 @@ local StarterPlayer = game:GetService("StarterPlayer")
 local VirtualUser = game:GetService("VirtualUser")
 local LP = Players.LocalPlayer
 
+-- Función auxiliar para teleport (definida aquí, ya que faltaba)
+local function tpCFrame(cf)
+    local hrp = LP.Character and LP.Character:FindFirstChild("HumanoidRootPart")
+    if hrp then
+        pcall(function() hrp.CFrame = cf end)
+    end
+end
+
 -- Funciones auxiliares
 local function alive(i)
     if not i then return false end
@@ -309,7 +317,7 @@ local function ensureWorldEntry(cat, model)
     if not alive(model) or worldReg[cat][model] then return end
     local rep = firstBasePart(model)
     if not validPart(rep) then return end
-    worldReg[cat][model] = {part = rep}
+    worldReg[cat][model] = {model = model, part = rep}
 end
 local function registerFromDescendant(obj)
     if not alive(obj) then return end
@@ -331,6 +339,13 @@ local function refreshRoots()
         mapAdd[r2] = r2.DescendantAdded:Connect(registerFromDescendant)
         for _, d in ipairs(r2:GetDescendants()) do registerFromDescendant(d) end
     end
+    local count = 0
+    for _ in pairs(worldReg.Generator) do count = count + 1 end
+    Rayfield:Notify({
+        Title = "Generator ESP",
+        Content = "Generators registrados: " .. count,
+        Duration = 3
+    })
 end
 refreshRoots()
 
@@ -342,20 +357,24 @@ local function genProgress(m)
 end
 
 -- Función para aplicar ESP a generators
-local function applyEnhancedGeneratorESP(model, entry)
-    if not generatorESPEnhanced or not alive(model) then return end
+local function applyEnhancedGeneratorESP(entry)
+    local model = entry.model
     local part = entry.part
-    if not validPart(part) then return end
+    if not generatorESPEnhanced or not alive(model) or not validPart(part) then return end
     local hrp = LP.Character and LP.Character:FindFirstChild("HumanoidRootPart")
-    if hrp and dist(part.Position, hrp.Position) > generatorMaxRange then return end
+    if hrp and dist(part.Position, hrp.Position) > generatorMaxRange then
+        clearChild(part, "VD_Generator_Enhanced")
+        clearChild(part, "VD_Text_Generator_Enhanced")
+        return
+    end
     local pct = genProgress(model)
     local hue = clamp(pct / 100, 0, 0.33)
     local dynamicCol = Color3.fromHSV(hue, 1, 1)
-    local tagName = "VD_Generator_Enhanced"
-    local a = part:FindFirstChild(tagName)
+    local adornName = "VD_Generator_Enhanced"
+    local a = part:FindFirstChild(adornName)
     if not a then
         a = Instance.new("BoxHandleAdornment")
-        a.Name = tagName
+        a.Name = adornName
         a.Adornee = part
         a.ZIndex = 10
         a.AlwaysOnTop = true
@@ -377,24 +396,26 @@ local function applyEnhancedGeneratorESP(model, entry)
         lbl.Text = txt
         lbl.TextColor3 = dynamicCol
     end
+    if hrp then
+        local fadeDist = dist(part.Position, hrp.Position)
+        local fade = clamp(fadeDist / generatorMaxRange, 0, 1)
+        a.Transparency = 0.3 + (fade * 0.7)
+        if lbl then lbl.TextTransparency = fade * 0.5 end
+    end
 end
 
 local generatorEnhancedLoopConn = nil
 local function startGeneratorEnhancedLoop()
     if generatorEnhancedLoopConn then return end
-    generatorEnhancedLoopConn = task.spawn(function()
-        while generatorESPEnhanced do
-            for _, entry in pairs(worldReg.Generator) do
-                local model = entry.model
-                if model then applyEnhancedGeneratorESP(model, entry) end
-            end
-            task.wait(0.25)
+    generatorEnhancedLoopConn = RunService.Heartbeat:Connect(function()
+        if not generatorESPEnhanced then return end
+        for _, entry in pairs(worldReg.Generator) do
+            applyEnhancedGeneratorESP(entry)
         end
-        generatorEnhancedLoopConn = nil
     end)
 end
 local function stopGeneratorEnhancedLoop()
-    if generatorEnhancedLoopConn then task.cancel(generatorEnhancedLoopConn) generatorEnhancedLoopConn = nil end
+    if generatorEnhancedLoopConn then generatorEnhancedLoopConn:Disconnect() generatorEnhancedLoopConn = nil end
     for _, entry in pairs(worldReg.Generator) do
         if entry.part then
             clearChild(entry.part, "VD_Generator_Enhanced")
@@ -705,10 +726,31 @@ TabSurvivor:CreateButton({
 
 TabSurvivor:CreateSection("Speed Boost")
 local speedBoostMultiplier = 1.0
+local speedHumanoid = nil  -- Definida aquí
+local speedCurrent = 16  -- Velocidad base por defecto (ajusta si es necesario)
+local speedEnforced = false  -- Definida aquí
+
+local function canEnforce()  -- Definida aquí
+    return speedHumanoid and speedHumanoid.Parent and LP.Character == speedHumanoid.Parent
+end
 
 local function setWalkSpeed(h, v)
     if h and h.Parent then
         pcall(function() h.WalkSpeed = v * speedBoostMultiplier end)
+    end
+end
+
+-- Inicializar speedHumanoid cuando el personaje cargue
+LP.CharacterAdded:Connect(function(char)
+    speedHumanoid = char:FindFirstChild("Humanoid")
+    if speedHumanoid then
+        speedCurrent = speedHumanoid.WalkSpeed
+    end
+end)
+if LP.Character then
+    speedHumanoid = LP.Character:FindFirstChild("Humanoid")
+    if speedHumanoid then
+        speedCurrent = speedHumanoid.WalkSpeed
     end
 end
 
@@ -801,31 +843,76 @@ TabSurvivor:CreateSection("Perfect Skill Check")
 local perfectSkillEnabled = false
 local perfectSkillHookInstalled = false
 local perfectSkillConn = nil
+local oldNamecall = nil
+
+local function isExactSkill(inst)
+    if typeof(inst) == "Instance" and inst:IsA("RemoteEvent") then
+        local name = inst.Name:lower()
+        return name:find("skillcheck") or name:find("skill") or name:find("check")
+    end
+    if typeof(inst) == "Instance" and (inst:IsA("ScreenGui") or inst:IsA("GuiObject")) then
+        local name = inst.Name:lower()
+        return name:find("skillcheck") or name:find("skill")
+    end
+    return false
+end
 
 local function installPerfectSkillHook()
-    if perfectSkillHookInstalled then return end
-    if typeof(hookmetamethod) == "function" and typeof(getnamecallmethod) == "function" then
-        local old
-        old = hookmetamethod(game, "__namecall", function(self, ...)
-            local m = getnamecallmethod()
-            if perfectSkillEnabled and typeof(self) == "Instance" and isExactSkill(self) and (m == "FireServer" or m == "InvokeServer") then
-                local args = {...}
-                if self.Name == "SkillCheckEvent" or self.Name == "SkillCheckResultEvent" then
-                    args[1] = true
-                    args[2] = 1.0
-                    return old(self, table.unpack(args))
-                elseif self.Name == "SkillCheckFailEvent" then
-                    return nil
+    if perfectSkillHookInstalled or not (typeof(hookmetamethod) == "function" and typeof(getnamecallmethod) == "function") then
+        if not typeof(hookmetamethod) == "function" then
+            Rayfield:Notify({
+                Title = "Perfect Skill Check",
+                Content = "Hook no soportado: Requiere un executor avanzado (e.g., Synapse). Usando modo alternativo.",
+                Duration = 5
+            })
+            return false
+        end
+        return true
+    end
+    local success, err = pcall(function()
+        oldNamecall = hookmetamethod(game, "__namecall", function(self, ...)
+            if perfectSkillEnabled and isExactSkill(self) then
+                local m = getnamecallmethod()
+                if m == "FireServer" or m == "InvokeServer" then
+                    local args = {...}
+                    if self.Name == "SkillCheckEvent" or self.Name == "SkillCheckResultEvent" then
+                        args[1] = true
+                        args[2] = 1.0
+                        return oldNamecall(self, table.unpack(args))
+                    elseif self.Name == "SkillCheckFailEvent" then
+                        return nil
+                    end
                 end
             end
-            return old(self, ...)
+            return oldNamecall(self, ...)
         end)
+    end)
+    if success then
         perfectSkillHookInstalled = true
+        Rayfield:Notify({
+            Title = "Perfect Skill Check",
+            Content = "Hook instalado correctamente.",
+            Duration = 3
+        })
+    else
+        Rayfield:Notify({
+            Title = "Perfect Skill Check",
+            Content = "Error al instalar hook: " .. tostring(err) .. ". Usando modo alternativo.",
+            Duration = 5
+        })
+        return false
     end
+    return true
 end
 
 local function startPerfectSkill()
-    installPerfectSkillHook()
+    if not installPerfectSkillHook() then
+        Rayfield:Notify({
+            Title = "Perfect Skill Check",
+            Content = "Modo alternativo activado: Solo simulación de input.",
+            Duration = 3
+        })
+    end
     perfectSkillEnabled = true
     local pg = LP:FindFirstChild("PlayerGui")
     if pg then
@@ -839,7 +926,7 @@ local function startPerfectSkill()
                         VirtualUser:Button1Up(Vector2.new(0, 0))
                         Rayfield:Notify({
                             Title = "Perfect Skill Check",
-                            Content = "¡Skill check completado perfectamente!",
+                            Content = "¡Skill check completado!",
                             Duration = 2
                         })
                     end
@@ -851,7 +938,10 @@ end
 
 local function stopPerfectSkill()
     perfectSkillEnabled = false
-    if perfectSkillConn then perfectSkillConn:Disconnect() perfectSkillConn = nil end
+    if perfectSkillConn then 
+        perfectSkillConn:Disconnect() 
+        perfectSkillConn = nil 
+    end
 end
 
 local function evalPerfectSkill()
@@ -859,7 +949,7 @@ local function evalPerfectSkill()
         stopPerfectSkill()
         Rayfield:Notify({
             Title = "Perfect Skill Check",
-            Content = "Desactivado: Solo para Survivors",
+            Content = "Desactivado: Solo para Survivors.",
             Duration = 4
         })
     end
@@ -873,7 +963,7 @@ TabSurvivor:CreateToggle({
         if s and getRole(LP) ~= "Survivor" then
             Rayfield:Notify({
                 Title = "Perfect Skill Check",
-                Content = "Solo disponible para Survivors",
+                Content = "Solo disponible para Survivors.",
                 Duration = 4
             })
             return
@@ -882,14 +972,14 @@ TabSurvivor:CreateToggle({
             startPerfectSkill()
             Rayfield:Notify({
                 Title = "Perfect Skill Check",
-                Content = "Activado: Skill checks serán perfectos",
+                Content = "Activado: Skill checks serán perfectos.",
                 Duration = 3
             })
         else
             stopPerfectSkill()
             Rayfield:Notify({
                 Title = "Perfect Skill Check",
-                Content = "Desactivado",
+                Content = "Desactivado.",
                 Duration = 3
             })
         end

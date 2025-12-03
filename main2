@@ -269,3 +269,5 @@ TabVisual:CreateToggle({
         if s then startGeneratorEnhancedLoop() else stopGeneratorEnhancedLoop() end
     end
 })
+
+Rayfield:LoadConfiguration()

@@ -2525,7 +2525,7 @@ KillerTab:CreateToggle({
 local hitboxExpanderEnabled = false
 local hitboxSize = 15
 local hitboxTransparency = 0.6
-local hitboxColor = Color3.fromRGB(255, 0, 0)  -- Rojo por defecto
+local hitboxColor = Color3.fromRGB(0, 255, 0)
 local originalSizes = {}
 local hitboxConnections = {}
 local damageRemote = nil

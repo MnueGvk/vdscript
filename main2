@@ -1,6 +1,3178 @@
 local Rayfield = loadstring(game:HttpGet('https://sirius.menu/rayfield'))()
 
+local Players = game:GetService("Players")  
+-- ============================================
+-- 1. SERVICIOS Y BIBLIOTECAS
+-- ============================================
+
+local Rayfield = loadstring(game:HttpGet("https://sirius.menu/rayfield"))()
 local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local Workspace = game:GetService("Workspace")
+local Lighting = game:GetService("Lighting")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local StarterGui = game:GetService("StarterGui")
+local LP = Players.LocalPlayer
+
+-- ============================================
+-- 2. FUNCIONES UTILITARIAS
+-- ============================================
+
+local function alive(obj) return obj and obj.Parent ~= nil end
+local function validPart(p) return p and p:IsA("BasePart") and alive(p) end
+local function dist(a, b) return (a - b).Magnitude end
+local function clamp(n, lo, hi) if n < lo then return lo elseif n > hi then return hi else return n end end
+local function firstBasePart(inst)
+    if not alive(inst) then return nil end
+    if inst:IsA("BasePart") then return inst end
+    if inst:IsA("Model") then
+        if inst.PrimaryPart and inst.PrimaryPart:IsA("BasePart") and alive(inst.PrimaryPart) then
+            return inst.PrimaryPart
+        end
+        local p = inst:FindFirstChildWhichIsA("BasePart", true)
+        if validPart(p) then return p end
+    end
+    return nil
+end
+
+-- ============================================
+-- 3. VARIABLES GLOBALES Y CACHE
+-- ============================================
+
+local playerCache = {}
+local connections = {}
+local espObjects = {}
+
+-- ============================================
+-- 4. CONFIGURACIÓN DE COLORES
+-- ============================================
+
+local survivorColor = Color3.fromRGB(0, 255, 0)
+local killerColor = Color3.fromRGB(255, 0, 0)
+local spectatorColor = Color3.fromRGB(255, 255, 255)
+local lobbyColor = Color3.fromRGB(200, 200, 200)
+local generatorColor = Color3.fromRGB(0, 170, 255)
+
+-- ============================================
+-- 5. FUNCIONES DE DETECCIÓN DE ROLES
+-- ============================================
+
+local function getRole(p)
+    if not p then return "Lobby" end
+    local team = p.Team
+    if not team then return "Lobby" end
+    local teamName = team.Name:lower()
+    if teamName:find("killer") then return "Killer" end
+    if teamName:find("survivor") then return "Survivor" end
+    return "Lobby"
+end
+
+local function isSpectator(p)
+    if not p then return true end
+    if not p.Character then return true end
+    local humanoid = p.Character:FindFirstChildOfClass("Humanoid")
+    if humanoid and humanoid.Health <= 0 then return true end
+    return p:GetAttribute("Spectator") == true
+end
+
+local function isInLobby(p)
+    if not p then return true end
+    if not p.Character then return true end
+    local hrp = p.Character:FindFirstChild("HumanoidRootPart")  
+    if hrp then
+        local pos = hrp.Position
+        if pos.Y < -100 then return true end
+    end
+    return getRole(p) == "Lobby"
+end
+
+local function getPlayerColor(p)
+    if isInLobby(p) then return lobbyColor end
+    if isSpectator(p) then return spectatorColor end
+    if getRole(p) == "Killer" then return killerColor end
+    return survivorColor
+end
+
+-- ============================================
+-- 6. FUNCIONES DE ESP Y HIGHLIGHTS
+-- ============================================
+
+local function makeBillboard(text, color3, parent)
+    if not parent then return nil end
+    local existing = parent:FindFirstChild("ESP_Tag")
+    if existing then
+        local label = existing:FindFirstChild("Label")
+        if label then
+            label.Text = text
+            label.TextColor3 = color3
+        end
+        existing.Enabled = true
+        return existing
+    end
+    local g = Instance.new("BillboardGui")
+    g.Name = "ESP_Tag"
+    g.AlwaysOnTop = true
+    g.Size = UDim2.new(0, 200, 0, 36)
+    g.StudsOffset = Vector3.new(0, 3, 0)
+    g.Enabled = true
+    g.Parent = parent
+    local l = Instance.new("TextLabel")
+    l.Name = "Label"
+    l.BackgroundTransparency = 1
+    l.Size = UDim2.new(1, 0, 1, 0)
+    l.Font = Enum.Font.GothamBold
+    l.Text = text
+    l.TextSize = 14
+    l.TextColor3 = color3 or Color3.new(1, 1, 1)
+    l.TextStrokeTransparency = 0
+    l.TextStrokeColor3 = Color3.new(0, 0, 0)
+    l.Parent = g
+    table.insert(espObjects, g)
+    return g
+end
+
+local function ensureHighlight(model, color)
+    if not (model and model:IsA("Model") and alive(model)) then return nil end
+    local hl = model:FindFirstChild("ESP_Highlight")
+    if not hl then
+        local success, result = pcall(function()
+            local h = Instance.new("Highlight")
+            h.Name = "ESP_Highlight"
+            h.Adornee = model
+            h.FillTransparency = 0.5
+            h.OutlineTransparency = 0.2
+            h.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+            h.FillColor = color
+            h.OutlineColor = color
+            h.Parent = model
+            return h
+        end)
+        if success then 
+            hl = result
+            table.insert(espObjects, hl)
+        else return nil end
+    else
+        hl.FillColor = color
+        hl.OutlineColor = color
+        hl.FillTransparency = 0.5
+        hl.OutlineTransparency = 0.2
+        hl.Enabled = true
+    end
+    return hl
+end
+
+local function clearHighlight(model)
+    if model and model:FindFirstChild("ESP_Highlight") then
+        local hl = model.ESP_Highlight
+        hl:Destroy()
+        for i, obj in ipairs(espObjects) do
+            if obj == hl then
+                table.remove(espObjects, i)
+                break
+            end
+        end
+    end
+end
+
+-- ============================================
+-- 7. VENTANA RAYFIELD PRINCIPAL
+-- ============================================
+
+local Window = Rayfield:CreateWindow({
+    Name = "LoreOnTop",
+    LoadingTitle = "Violence District",
+    LoadingSubtitle = "Hecho por kcha abuelas3000",
+    ConfigurationSaving = {Enabled = true, FolderName = "ESP_Suite", FileName = "esp_config"},
+    KeySystem = false
+})
+
+-- ============================================
+-- 8. CREACIÓN DE PESTAÑAS
+-- ============================================
+
+local VisualTab = Window:CreateTab("Visual")
+local SurvivorTab = Window:CreateTab("Survivors")
+local KillerTab = Window:CreateTab("Killers")
+local GraphicsTab = Window:CreateTab("Graphics")
+local MiscTab = Window:CreateTab("Misc")
+
+-- ============================================
+-- 9. SISTEMA PLAYER ESP (VISUAL TAB)
+-- ============================================
+
+local playerESPEnabled = false
+local nametagsEnabled = false 
+local espLoopConn = nil
+local lastPlayerESPUpdate = 0
+local PLAYER_ESP_INTERVAL = 1.5
+
+local function cleanPlayerESP(p)
+    if not p then return end
+    if p.Character then
+        clearHighlight(p.Character)
+        local head = p.Character:FindFirstChild("Head")
+        if head and head:FindFirstChild("ESP_Tag") then
+            head.ESP_Tag:Destroy()
+        end
+    end
+    if playerCache[p] then
+        playerCache[p] = nil
+    end
+end
+
+local function applyOptimizedPlayerESP(p)
+    if p == LP then return end
+    local character = p.Character
+    if not (character and alive(character)) then
+        cleanPlayerESP(p)
+        return
+    end
+    local color = getPlayerColor(p)
+    local isLobby = isInLobby(p)
+    local isSpec = isSpectator(p)
+    local showPlayer = playerESPEnabled and not isLobby and not isSpec
+    local showName = nametagsEnabled
+    
+    if not (showPlayer or showName) then
+        cleanPlayerESP(p)
+        return
+    end
+    
+    if showPlayer then
+        local hl = ensureHighlight(character, color)
+        if hl then
+            hl.Enabled = true
+            hl.FillTransparency = 0.6
+            hl.OutlineTransparency = 0.4
+        end
+    else
+        clearHighlight(character)
+    end
+    
+    local head = character:FindFirstChild("Head")
+    if showName and validPart(head) then
+        local text = p.Name
+        if isLobby then text = text .. " [LOBBY]" end
+        if isSpec then text = text .. " [ESPECTADOR]" end
+        
+        local existingTag = head:FindFirstChild("ESP_Tag")
+        if not existingTag then
+            local bb = Instance.new("BillboardGui")
+            bb.Name = "ESP_Tag"
+            bb.AlwaysOnTop = true
+            bb.Size = UDim2.new(0, 180, 0, 30)
+            bb.StudsOffset = Vector3.new(0, 3.5, 0)
+            bb.Enabled = true
+            bb.Parent = head
+            local label = Instance.new("TextLabel")
+            label.Name = "Label"
+            label.BackgroundTransparency = 1
+            label.Size = UDim2.new(1, 0, 1, 0)
+            label.Font = Enum.Font.GothamMedium
+            label.Text = text
+            label.TextSize = 13
+            label.TextColor3 = color
+            label.TextStrokeTransparency = 0.3
+            label.TextStrokeColor3 = Color3.new(0, 0, 0)
+            label.Parent = bb
+            table.insert(espObjects, bb)
+        else
+            local label = existingTag:FindFirstChild("Label")
+            if label then
+                label.Text = text
+                label.TextColor3 = color
+            end
+            existingTag.Enabled = true
+        end
+    elseif head and head:FindFirstChild("ESP_Tag") then
+        if not showName then
+            head.ESP_Tag.Enabled = false
+        end
+    end
+    
+    playerCache[p] = {
+        lastUpdate = tick(),
+        character = character,
+        color = color,
+        isLobby = isLobby,
+        isSpectator = isSpec
+    }
+end
+
+local function updateAllPlayersESP()
+    if not (playerESPEnabled or nametagsEnabled) then return end
+    local now = tick()
+    if now - lastPlayerESPUpdate < PLAYER_ESP_INTERVAL then return end
+    lastPlayerESPUpdate = now
+    
+    for player, cacheData in pairs(playerCache) do
+        if player and player.Parent then
+            local shouldUpdate = true
+            if cacheData then
+                local timeSinceUpdate = now - (cacheData.lastUpdate or 0)
+                local currentIsLobby = isInLobby(player)
+                local currentIsSpec = isSpectator(player)
+                shouldUpdate = (timeSinceUpdate > PLAYER_ESP_INTERVAL) or 
+                              (currentIsLobby ~= cacheData.isLobby) or
+                              (currentIsSpec ~= cacheData.isSpectator)
+            end
+            if shouldUpdate then
+                applyOptimizedPlayerESP(player)
+            end
+        else
+            cleanPlayerESP(player)
+            playerCache[player] = nil
+        end
+    end
+    
+    for _, player in ipairs(Players:GetPlayers()) do
+        if player ~= LP and not playerCache[player] then
+            if player.Character then
+                applyOptimizedPlayerESP(player)
+            end
+        end
+    end
+end
+
+local function startOptimizedESPLoop()
+    if espLoopConn then 
+        espLoopConn:Disconnect()
+        espLoopConn = nil
+    end
+    
+    for _, player in ipairs(Players:GetPlayers()) do
+        if player ~= LP and player.Character then
+            applyOptimizedPlayerESP(player)
+        end
+    end
+    
+    espLoopConn = RunService.Heartbeat:Connect(function()
+        updateAllPlayersESP()
+    end)
+end
+
+local function stopOptimizedESPLoop()
+    if espLoopConn then
+        espLoopConn:Disconnect()
+        espLoopConn = nil
+    end
+    
+    for player, _ in pairs(playerCache) do
+        cleanPlayerESP(player)
+    end
+    
+    playerCache = {}
+    lastPlayerESPUpdate = 0
+end
+
+local function setupPlayerWatchers()
+    for _, p in ipairs(Players:GetPlayers()) do
+        if p ~= LP then
+            if not connections[p] then
+                local playerConns = {}
+                playerConns.characterAdded = p.CharacterAdded:Connect(function(character)
+                    task.wait(1.5)
+                    if playerESPEnabled or nametagsEnabled then
+                        applyOptimizedPlayerESP(p)
+                    end
+                end)
+                playerConns.teamChanged = p:GetPropertyChangedSignal("Team"):Connect(function()
+                    task.wait(1.5)
+                    if playerESPEnabled or nametagsEnabled then
+                        applyOptimizedPlayerESP(p)
+                    end
+                end)
+                playerConns.spectatorChanged = p:GetAttributeChangedSignal("Spectator"):Connect(function()
+                    task.wait(1.5)
+                    if playerESPEnabled or nametagsEnabled then
+                        applyOptimizedPlayerESP(p)
+                    end
+                end)
+                connections[p] = playerConns
+                if p.Character then
+                    task.spawn(function()
+                        task.wait(1.5)
+                        if playerESPEnabled or nametagsEnabled then
+                            applyOptimizedPlayerESP(p)
+                        end
+                    end)
+                end
+            end
+        end
+    end
+end
+
+setupPlayerWatchers()
+
+Players.PlayerAdded:Connect(function(p)
+    if p ~= LP then
+        task.wait(1.5)
+        setupPlayerWatchers()
+        if playerESPEnabled or nametagsEnabled then
+            applyOptimizedPlayerESP(p)
+        end
+    end
+end)
+
+Players.PlayerRemoving:Connect(function(p)
+    if connections[p] then
+        for _, conn in pairs(connections[p]) do
+            pcall(function() conn:Disconnect() end)
+        end
+        connections[p] = nil
+    end
+    cleanPlayerESP(p)
+    playerCache[p] = nil
+end)
+
+-- Sección Player ESP
+VisualTab:CreateSection("Player ESP")
+
+VisualTab:CreateToggle({
+    Name = "Players ESP",
+    CurrentValue = false,
+    Flag = "PlayerESP",
+    Callback = function(s)
+        playerESPEnabled = s
+        if s or nametagsEnabled then
+            startOptimizedESPLoop()
+        else
+            stopOptimizedESPLoop()
+        end
+    end
+})
+
+VisualTab:CreateToggle({
+    Name = "Mostrar Nombres",
+    CurrentValue = false,
+    Flag = "Nametags",
+    Callback = function(s)
+        nametagsEnabled = s
+        if s or playerESPEnabled then
+            startOptimizedESPLoop()
+        else
+            stopOptimizedESPLoop()
+        end
+    end
+})
+
+VisualTab:CreateColorPicker({
+    Name = "Color Survivor",
+    Color = survivorColor,
+    Flag = "SurvivorCol",
+    Callback = function(c) 
+        survivorColor = c 
+        for player, data in pairs(playerCache) do
+            if getRole(player) == "Survivor" then
+                applyOptimizedPlayerESP(player)
+            end
+        end
+    end
+})
+
+VisualTab:CreateColorPicker({
+    Name = "Color Killer",
+    Color = killerColor,
+    Flag = "KillerCol",
+    Callback = function(c) 
+        killerColor = c 
+        for player, data in pairs(playerCache) do
+            if getRole(player) == "Killer" then
+                applyOptimizedPlayerESP(player)
+            end
+        end
+    end
+})
+
+VisualTab:CreateColorPicker({
+    Name = "Color Lobby",
+    Color = lobbyColor,
+    Flag = "LobbyCol",
+    Callback = function(c) 
+        lobbyColor = c 
+        for player, data in pairs(playerCache) do
+            if isInLobby(player) then
+                applyOptimizedPlayerESP(player)
+            end
+        end
+    end
+})
+
+-- ============================================
+-- 11. SISTEMA GENERATOR ESP (VISUAL TAB)
+-- ============================================
+
+local generatorESPEnabled = false
+local generatorLoopConn = nil
+local generatorCache = {}
+local lastGeneratorUpdate = 0
+local GENERATOR_ESP_INTERVAL = 1.5
+
+local function ensureGeneratorHighlight(model, color)
+    if not (model and model:IsA("Model") and alive(model)) then return nil end
+    local hl = model:FindFirstChild("Generator_Highlight")
+    if not hl then
+        local success, result = pcall(function()
+            local h = Instance.new("Highlight")
+            h.Name = "Generator_Highlight"
+            h.Adornee = model
+            h.FillTransparency = 0.7
+            h.OutlineTransparency = 0.2
+            h.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+            h.FillColor = color
+            h.OutlineColor = color
+            h.Parent = model
+            return h
+        end)
+        if success then 
+            hl = result
+            table.insert(espObjects, hl)
+        else return nil end
+    else
+        hl.FillColor = color
+        hl.OutlineColor = color
+        hl.FillTransparency = 0.7
+        hl.OutlineTransparency = 0.2
+        hl.Enabled = true
+    end
+    return hl
+end
+
+local function clearGeneratorHighlight(model)
+    if model and model:FindFirstChild("Generator_Highlight") then
+        local hl = model.Generator_Highlight
+        hl:Destroy()
+        for i, obj in ipairs(espObjects) do
+            if obj == hl then
+                table.remove(espObjects, i)
+                break
+            end
+        end
+    end
+end
+
+local function getGeneratorProgress(model)
+    local progress = model:GetAttribute("RepairProgress") or 
+                     model:GetAttribute("Progress") or 
+                     model:GetAttribute("CurrentProgress") or 0
+    if progress <= 1 then progress = progress * 100 end
+    return math.clamp(progress, 0, 100)
+end
+
+local function updateGeneratorESP()
+    if not generatorESPEnabled then return end
+    local now = tick()
+    if now - lastGeneratorUpdate < GENERATOR_ESP_INTERVAL then return end
+    lastGeneratorUpdate = now
+    
+    local foundGenerators = {}
+    local generatorCount = 0
+    local searchFolders = {
+        Workspace:FindFirstChild("Map"),
+        Workspace:FindFirstChild("Map1"),
+        Workspace:FindFirstChild("Generators")
+    }
+    
+    for _, folder in ipairs(searchFolders) do
+        if folder then
+            for _, obj in ipairs(folder:GetDescendants()) do
+                if generatorCount >= 15 then break end
+                if obj:IsA("Model") and (obj.Name:lower():find("generator") or 
+                   obj:GetAttribute("IsGenerator") == true) then
+                    local basePart = firstBasePart(obj)
+                    if basePart then
+                        foundGenerators[obj] = basePart
+                        generatorCount = generatorCount + 1
+                    end
+                end
+            end
+        end
+    end
+    
+    if generatorCount == 0 then
+        for _, obj in ipairs(Workspace:GetDescendants()) do
+            if generatorCount >= 10 then break end
+            if obj:IsA("Model") and obj.Name:lower():find("generator") then
+                local basePart = firstBasePart(obj)
+                if basePart then
+                    foundGenerators[obj] = basePart
+                    generatorCount = generatorCount + 1
+                end
+            end
+        end
+    end
+    
+    for model, data in pairs(generatorCache) do
+        if not alive(model) or not foundGenerators[model] then
+            clearGeneratorHighlight(model)
+            if data.part and data.part:FindFirstChild("Generator_Tag") then
+                data.part.Generator_Tag:Destroy()
+            end
+            generatorCache[model] = nil
+        end
+    end
+    
+    for model, basePart in pairs(foundGenerators) do
+        local cacheData = generatorCache[model]
+        local shouldUpdate = true
+        if cacheData then
+            shouldUpdate = (now - (cacheData.lastUpdate or 0)) > 2
+        end
+        if shouldUpdate then
+            local progress = getGeneratorProgress(model)
+            local color = generatorColor
+            if progress >= 100 then color = Color3.fromRGB(0, 255, 0)
+            elseif progress >= 70 then color = Color3.fromRGB(100, 255, 100)
+            elseif progress >= 40 then color = Color3.fromRGB(255, 255, 0)
+            else color = Color3.fromRGB(255, 50, 50) end
+            
+            local hl = ensureGeneratorHighlight(model, color)
+            if hl then
+                hl.Enabled = true
+                hl.FillTransparency = 0.85
+                hl.OutlineTransparency = 0.6
+            end
+            
+            local existingTag = basePart:FindFirstChild("Generator_Tag")
+            if not existingTag then
+                local bb = Instance.new("BillboardGui")
+                bb.Name = "Generator_Tag"
+                bb.AlwaysOnTop = true
+                bb.Size = UDim2.new(0, 120, 0, 25)
+                bb.StudsOffset = Vector3.new(0, 4, 0)
+                bb.Enabled = true
+                bb.Parent = basePart
+                local label = Instance.new("TextLabel")
+                label.Name = "Label"
+                label.BackgroundTransparency = 1
+                label.Size = UDim2.new(1, 0, 1, 0)
+                label.Font = Enum.Font.GothamMedium
+                label.Text = string.format("%.0f%%", progress)
+                label.TextSize = 11
+                label.TextColor3 = color
+                label.TextStrokeTransparency = 0.6
+                label.TextStrokeColor3 = Color3.new(0, 0, 0)
+                label.Parent = bb
+                table.insert(espObjects, bb)
+            else
+                local label = existingTag:FindFirstChild("Label")
+                if label then
+                    label.Text = string.format("%.0f%%", progress)
+                    label.TextColor3 = color
+                end
+            end
+            
+            generatorCache[model] = {
+                model = model,
+                part = basePart,
+                lastUpdate = now
+            }
+        end
+    end
+end
+
+local function startGeneratorESPLoop()
+    if generatorLoopConn then return end
+    task.wait(1.5)
+    updateGeneratorESP()
+    generatorLoopConn = RunService.Heartbeat:Connect(function()
+        updateGeneratorESP()
+    end)
+end
+
+local function stopGeneratorESPLoop()
+    if generatorLoopConn then
+        generatorLoopConn:Disconnect()
+        generatorLoopConn = nil
+    end
+    for model, data in pairs(generatorCache) do
+        if data and data.model then
+            clearGeneratorHighlight(data.model)
+            if data.part and data.part:FindFirstChild("Generator_Tag") then
+                data.part.Generator_Tag:Destroy()
+            end
+        end
+    end
+    generatorCache = {}
+    lastGeneratorUpdate = 0
+    for i = #espObjects, 1, -1 do
+        local obj = espObjects[i]
+        if obj and obj.Name == "Generator_Tag" then
+            pcall(function() obj:Destroy() end)
+            table.remove(espObjects, i)
+        end
+    end
+end
+
+-- Sección Generator ESP
+VisualTab:CreateSection("Generator ESP")
+
+VisualTab:CreateToggle({
+    Name = "Generator ESP",
+    CurrentValue = false,
+    Flag = "GeneratorESP",
+    Callback = function(s)
+        generatorESPEnabled = s
+        if s then 
+            startGeneratorESPLoop() 
+        else 
+            stopGeneratorESPLoop() 
+        end
+    end
+})
+
+VisualTab:CreateColorPicker({
+    Name = "Generator Color",
+    Color = generatorColor,
+    Flag = "GenCol",
+    Callback = function(c) 
+        generatorColor = c 
+    end
+})
+
+-- ============================================
+-- 12. SISTEMA SPEED BOOST (SURVIVOR TAB)
+-- ============================================
+
+local speedBoostEnabled = false
+local speedBoostLevel = 1
+local speedBoostValues = {1.1, 1.2, 1.3, 1.4, 1.5}
+local speedBoostConnection = nil
+local originalWalkspeed = 16
+local characterAddedConnection = nil
+
+-- Función para aplicar el speed boost
+local function applySpeedBoost()
+    local char = LP.Character
+    if char then
+        local humanoid = char:FindFirstChildOfClass("Humanoid")
+        if humanoid then
+            if speedBoostEnabled then
+                local boostMultiplier = speedBoostValues[speedBoostLevel] or 1.1
+                local newSpeed = originalWalkspeed * boostMultiplier
+                
+                -- Aplicar velocidad
+                humanoid.WalkSpeed = newSpeed
+                
+                -- Aplicar atributos
+                pcall(function()
+                    char:SetAttribute("speedboost", speedBoostLevel)
+                    char:SetAttribute("gp_applied_by", LP.UserId)
+                    char:SetAttribute("IsRunning", true)
+                end)
+            else
+                -- Restaurar velocidad
+                humanoid.WalkSpeed = originalWalkspeed
+                
+                -- Limpiar atributos
+                pcall(function()
+                    char:SetAttribute("speedboost", nil)
+                    char:SetAttribute("gp_applied_by", nil)
+                    char:SetAttribute("IsRunning", false)
+                end)
+            end
+        end
+    end
+end
+
+-- Función para mantener el boost activo constantemente
+local function maintainSpeedBoost()
+    if speedBoostConnection then
+        speedBoostConnection:Disconnect()
+    end
+    
+    speedBoostConnection = RunService.Heartbeat:Connect(function()
+        if not speedBoostEnabled then return end
+        applySpeedBoost()
+    end)
+    
+    -- Aplicar inmediatamente
+    applySpeedBoost()
+end
+
+-- Función para limpiar al desactivar
+local function cleanupSpeedBoost()
+    if speedBoostConnection then
+        speedBoostConnection:Disconnect()
+        speedBoostConnection = nil
+    end
+    
+    if characterAddedConnection then
+        characterAddedConnection:Disconnect()
+        characterAddedConnection = nil
+    end
+    
+    -- Restaurar velocidad
+    local char = LP.Character
+    if char then
+        local humanoid = char:FindFirstChildOfClass("Humanoid")
+        if humanoid then
+            humanoid.WalkSpeed = originalWalkspeed
+        end
+        
+        pcall(function()
+            char:SetAttribute("speedboost", nil)
+            char:SetAttribute("gp_applied_by", nil)
+            char:SetAttribute("IsRunning", false)
+        end)
+    end
+end
+
+-- Sección Speed Boost
+SurvivorTab:CreateSection("Speed Boost")
+
+SurvivorTab:CreateToggle({
+    Name = "Speed Boost",
+    CurrentValue = false,
+    Flag = "SpeedBoostToggle",
+    Callback = function(v)
+        speedBoostEnabled = v
+        
+        if v then
+            -- Guardar velocidad original
+            local char = LP.Character
+            if char then
+                local humanoid = char:FindFirstChildOfClass("Humanoid")
+                if humanoid then
+                    originalWalkspeed = humanoid.WalkSpeed
+                end
+            end
+            
+            -- Limpiar primero cualquier estado anterior
+            cleanupSpeedBoost()
+            
+            -- Iniciar sistema de boost
+            maintainSpeedBoost()
+            
+            -- Reconectar cuando cambie el personaje
+            characterAddedConnection = LP.CharacterAdded:Connect(function()
+                task.wait(0.5)
+                if speedBoostEnabled then
+                    local char = LP.Character
+                    if char then
+                        local humanoid = char:FindFirstChildOfClass("Humanoid")
+                        if humanoid then
+                            originalWalkspeed = humanoid.WalkSpeed
+                            applySpeedBoost()
+                        end
+                    end
+                end
+            end)
+            
+            local boostPercent = (speedBoostValues[speedBoostLevel] - 1) * 100
+            Rayfield:Notify({
+                Title = "Speed Boost",
+                Content = string.format("Activado (Nivel %d: +%.0f%%)", speedBoostLevel, boostPercent),
+                Duration = 3
+            })
+            
+        else
+            -- Desactivar completamente
+            cleanupSpeedBoost()
+            
+            Rayfield:Notify({
+                Title = "Speed Boost",
+                Content = "Desactivado",
+                Duration = 3
+            })
+        end
+    end
+})
+
+-- Slider para niveles del speed boost
+SurvivorTab:CreateSlider({
+    Name = "Nivel Speed Boost",
+    Range = {1, 5},
+    Increment = 1,
+    Suffix = " (1=10%, 2=20%, 3=30%, 4=40%, 5=50%)",
+    CurrentValue = speedBoostLevel,
+    Flag = "SpeedBoostLevel",
+    Callback = function(v)
+        speedBoostLevel = math.floor(v)
+        
+        -- Actualizar si está activo
+        if speedBoostEnabled then
+            applySpeedBoost()
+            
+            local boostPercent = (speedBoostValues[speedBoostLevel] - 1) * 100
+            Rayfield:Notify({
+                Title = "Speed Boost",
+                Content = string.format("Nivel %d: +%.0f%% de velocidad", speedBoostLevel, boostPercent),
+                Duration = 2
+            })
+        end
+    end
+})
+
+-- Botón para resetear velocidad (por si hay problemas)
+SurvivorTab:CreateButton({
+    Name = "Resetear Velocidad",
+    Callback = function()
+        local char = LP.Character
+        if char then
+            local humanoid = char:FindFirstChildOfClass("Humanoid")
+            if humanoid then
+                if speedBoostEnabled then
+                    -- Solo resetear la velocidad actual manteniendo el boost
+                    local boostMultiplier = speedBoostValues[speedBoostLevel] or 1.1
+                    humanoid.WalkSpeed = originalWalkspeed * boostMultiplier
+                else
+                    humanoid.WalkSpeed = originalWalkspeed
+                end
+                
+                Rayfield:Notify({
+                    Title = "Speed Boost",
+                    Content = "Velocidad reseteada",
+                    Duration = 2
+                })
+            end
+        end
+    end
+})
+-- ============================================
+-- 13. SISTEMA GENERATOR BOOST (SURVIVOR TAB)
+-- ============================================
+
+local repairBoostEnabled = false
+local repairBoostLevel = 1
+local repairBoostValues = {1.1, 1.2, 1.3, 1.4, 1.5, 1.6, 1.7, 1.8, 1.9, 2.0}
+local repairBoostConnection = nil
+local originalRemoteFunctions = {}
+local interceptedRemotes = {}
+local lastLevelApplied = nil
+local isInitialized = false
+
+-- Función para aplicar atributos al personaje
+local function applyRepairBoostToCharacter()
+    if not repairBoostEnabled or not LP.Character then return end
+    
+    -- Solo aplicar si el nivel cambió o es la primera vez
+    if lastLevelApplied == repairBoostLevel and isInitialized then return end
+    
+    local boostMultiplier = repairBoostValues[repairBoostLevel] or 1.1
+    
+    pcall(function()
+        -- Atributos en minúsculas
+        LP.Character:SetAttribute("repairboost", boostMultiplier)
+        LP.Character:SetAttribute("gp_applied_by", LP.UserId)
+        
+        -- GroupProject con mayúsculas
+        local repairingGenerators = LP.Character:FindFirstChild("RepairingGenerators")
+        if repairingGenerators and repairingGenerators:IsA("NumberValue") then
+            if repairingGenerators.Value > 0 then
+                LP.Character:SetAttribute("GroupProject", math.min(3, repairingGenerators.Value))
+            else
+                LP.Character:SetAttribute("GroupProject", 1)
+            end
+        else
+            LP.Character:SetAttribute("GroupProject", 1)
+        end
+    end)
+    
+    lastLevelApplied = repairBoostLevel
+    isInitialized = true
+    
+    print(string.format("[Repair Boost] Nivel %d: %.0f%% extra aplicado", 
+        repairBoostLevel, (boostMultiplier - 1) * 100))
+end
+
+-- Función para interceptar remotes de reparación
+local function interceptRepairRemotes()
+    for _, obj in ipairs(game:GetDescendants()) do
+        if obj:IsA("RemoteEvent") or obj:IsA("RemoteFunction") then
+            local nameLower = obj.Name:lower()
+            if nameLower:find("repair") or nameLower:find("generator") or 
+               nameLower:find("fix") or nameLower:find("progress") then
+                
+                if not interceptedRemotes[obj] then
+                    interceptedRemotes[obj] = true
+                    
+                    if obj:IsA("RemoteEvent") then
+                        local originalFire = obj.FireServer
+                        originalRemoteFunctions[obj] = originalFire
+                        
+                        obj.FireServer = function(self, ...)
+                            local args = {...}
+                            
+                            if repairBoostEnabled then
+                                local boostMultiplier = repairBoostValues[repairBoostLevel] or 1.1
+                                
+                                -- Modificar argumentos
+                                for i, arg in ipairs(args) do
+                                    if type(arg) == "number" then
+                                        args[i] = arg * boostMultiplier
+                                    elseif type(arg) == "table" then
+                                        local modifiedTable = {}
+                                        for k, v in pairs(arg) do
+                                            if (k:lower() == "progress" or k:lower() == "amount" or 
+                                                k:lower() == "speed") and type(v) == "number" then
+                                                modifiedTable[k] = v * boostMultiplier
+                                            else
+                                                modifiedTable[k] = v
+                                            end
+                                        end
+                                        args[i] = modifiedTable
+                                    elseif type(arg) == "Instance" and arg:IsA("Model") then
+                                        if arg.Name:lower():find("generator") then
+                                            pcall(function()
+                                                arg:SetAttribute("repairboost", repairBoostLevel)
+                                                arg:SetAttribute("gp_applied_by", LP.UserId)
+                                            end)
+                                        end
+                                    end
+                                end
+                            end
+                            
+                            return originalFire(self, unpack(args))
+                        end
+                    
+                    elseif obj:IsA("RemoteFunction") then
+                        local originalInvoke = obj.InvokeServer
+                        originalRemoteFunctions[obj] = originalInvoke
+                        
+                        obj.InvokeServer = function(self, ...)
+                            local args = {...}
+                            
+                            if repairBoostEnabled then
+                                local boostMultiplier = repairBoostValues[repairBoostLevel] or 1.1
+                                
+                                local result = originalInvoke(self, ...)
+                                
+                                if type(result) == "number" then
+                                    return result * boostMultiplier
+                                elseif type(result) == "table" then
+                                    local modifiedResult = {}
+                                    for k, v in pairs(result) do
+                                        if (k:lower() == "progress" or k:lower() == "amount") and 
+                                           type(v) == "number" then
+                                            modifiedResult[k] = v * boostMultiplier
+                                        else
+                                            modifiedResult[k] = v
+                                        end
+                                    end
+                                    return modifiedResult
+                                end
+                                return result
+                            end
+                            
+                            return originalInvoke(self, ...)
+                        end
+                    end
+                end
+            end
+        end
+    end
+end
+
+-- Función para aplicar boost a generadores
+local function applyBoostToExistingGenerators()
+    if not repairBoostEnabled then return end
+    
+    local boostMultiplier = repairBoostValues[repairBoostLevel] or 1.1
+    
+    for _, generator in ipairs(workspace:GetDescendants()) do
+        if generator:IsA("Model") and generator.Name:lower():find("generator") then
+            
+            pcall(function()
+                -- Verificar si el jugador está cerca
+                local char = LP.Character
+                if char then
+                    local rootPart = char:FindFirstChild("HumanoidRootPart")
+                    if rootPart and (rootPart.Position - generator.Position).Magnitude < 20 then
+                        generator:SetAttribute("repairboost", repairBoostLevel)
+                        generator:SetAttribute("gp_applied_by", LP.UserId)
+                        
+                        -- Aumentar progreso
+                        local currentProgress = generator:GetAttribute("Progress") or 
+                                              generator:GetAttribute("progress") or 0
+                        if type(currentProgress) == "number" and currentProgress < 100 then
+                            local increment = 0.15 * boostMultiplier
+                            local newProgress = math.min(100, currentProgress + increment)
+                            generator:SetAttribute("Progress", newProgress)
+                            generator:SetAttribute("progress", newProgress)
+                        end
+                    end
+                end
+            end)
+        end
+    end
+end
+
+-- Función para mantener el boost activo
+local function maintainRepairBoost()
+    if repairBoostConnection then
+        repairBoostConnection:Disconnect()
+    end
+    
+    repairBoostConnection = RunService.Heartbeat:Connect(function()
+        if not repairBoostEnabled then return end
+        
+        -- Aplicar al personaje
+        applyRepairBoostToCharacter()
+        
+        -- Aplicar a generadores periódicamente
+        local currentTime = tick()
+        if currentTime % 0.25 < 0.016 then  -- Cada ~0.25 segundos
+            applyBoostToExistingGenerators()
+        end
+    end)
+    
+    -- Aplicar inmediatamente
+    lastLevelApplied = nil
+    isInitialized = false
+    applyRepairBoostToCharacter()
+    interceptRepairRemotes()
+    applyBoostToExistingGenerators()
+end
+
+-- Función para limpiar al desactivar
+local function cleanupRepairBoost()
+    if repairBoostConnection then
+        repairBoostConnection:Disconnect()
+        repairBoostConnection = nil
+    end
+    
+    lastLevelApplied = nil
+    isInitialized = false
+    
+    -- Limpiar atributos del personaje
+    if LP.Character then
+        pcall(function()
+            LP.Character:SetAttribute("repairboost", nil)
+            LP.Character:SetAttribute("gp_applied_by", nil)
+            LP.Character:SetAttribute("GroupProject", nil)
+        end)
+    end
+    
+    -- Restaurar remotes
+    for obj, originalFunc in pairs(originalRemoteFunctions) do
+        if obj:IsA("RemoteEvent") then
+            obj.FireServer = originalFunc
+        elseif obj:IsA("RemoteFunction") then
+            obj.InvokeServer = originalFunc
+        end
+    end
+    originalRemoteFunctions = {}
+    interceptedRemotes = {}
+end
+
+-- Sección Generator Boost (10 niveles, 10-100%)
+SurvivorTab:CreateSection("Generator Boost")
+
+SurvivorTab:CreateToggle({
+    Name = "Generator Boost",
+    CurrentValue = false,
+    Flag = "GeneratorBoostToggle",
+    Callback = function(v)
+        repairBoostEnabled = v
+        
+        if v then
+            cleanupRepairBoost()  -- Limpiar primero
+            maintainRepairBoost()  -- Iniciar sistema
+            
+            -- Reconectar cuando cambie el personaje
+            LP.CharacterAdded:Connect(function()
+                task.wait(0.5)
+                if repairBoostEnabled then
+                    lastLevelApplied = nil
+                    isInitialized = false
+                    maintainRepairBoost()
+                end
+            end)
+            
+            local boostPercent = (repairBoostValues[repairBoostLevel] - 1) * 100
+            Rayfield:Notify({
+                Title = "Generator Boost",
+                Content = string.format("Activado (Nivel %d: +%.0f%%)", repairBoostLevel, boostPercent),
+                Duration = 3
+            })
+            
+        else
+            cleanupRepairBoost()
+            
+            Rayfield:Notify({
+                Title = "Generator Boost",
+                Content = "Desactivado",
+                Duration = 3
+            })
+        end
+    end
+})
+
+SurvivorTab:CreateSlider({
+    Name = "Nivel Generator Boost",
+    Range = {1, 10},
+    Increment = 1,
+    Suffix = " (1=10%, 2=20%, ..., 10=100%)",
+    CurrentValue = repairBoostLevel,
+    Flag = "GeneratorBoostLevel",
+    Callback = function(v)
+        repairBoostLevel = math.floor(v)
+        
+        if repairBoostEnabled then
+            lastLevelApplied = nil  -- Forzar reaplicación
+            applyRepairBoostToCharacter()
+            
+            local boostPercent = (repairBoostValues[repairBoostLevel] - 1) * 100
+            Rayfield:Notify({
+                Title = "Generator Boost",
+                Content = string.format("Nivel %d: +%.0f%% de reparación", repairBoostLevel, boostPercent),
+                Duration = 2
+            })
+        end
+    end
+})
+
+-- Botón para forzar reparación rápida
+SurvivorTab:CreateButton({
+    Name = "Forzar Reparación Rápida",
+    Callback = function()
+        if repairBoostEnabled then
+            local boostMultiplier = repairBoostValues[repairBoostLevel] or 1.1
+            
+            for _, generator in ipairs(workspace:GetDescendants()) do
+                if generator:IsA("Model") and generator.Name:lower():find("generator") then
+                    pcall(function()
+                        local currentProgress = generator:GetAttribute("Progress") or 
+                                              generator:GetAttribute("progress") or 0
+                        if type(currentProgress) == "number" and currentProgress < 100 then
+                            local increment = 25 * boostMultiplier
+                            local newProgress = math.min(100, currentProgress + increment)
+                            generator:SetAttribute("Progress", newProgress)
+                            generator:SetAttribute("progress", newProgress)
+                        end
+                    end)
+                end
+            end
+            
+            Rayfield:Notify({
+                Title = "Generator Boost",
+                Content = "Reparación forzada aplicada",
+                Duration = 3
+            })
+        else
+            Rayfield:Notify({
+                Title = "Generator Boost",
+                Content = "Activa el Generator Boost primero",
+                Duration = 3
+            })
+        end
+    end
+})
+
+-- Botón para resetear si hay problemas
+SurvivorTab:CreateButton({
+    Name = "Resetear Generator Boost",
+    Callback = function()
+        if repairBoostEnabled then
+            lastLevelApplied = nil
+            isInitialized = false
+            maintainRepairBoost()
+            
+            Rayfield:Notify({
+                Title = "Generator Boost",
+                Content = "Boost reseteado y reaplicado",
+                Duration = 2
+            })
+        else
+            Rayfield:Notify({
+                Title = "Generator Boost",
+                Content = "Activa el Generator Boost primero",
+                Duration = 2
+            })
+        end
+    end
+})
+
+-- ============================================
+-- 14. SISTEMA PERFECT SKILLCHECK (SURVIVOR TAB)
+-- ============================================
+
+local perfectSkillEnabled = false
+local skillcheckConnections = {}
+local skillcheckRemotes = {}
+
+local skillcheckNames = {
+    "SkillCheckPromptGui", "SkillCheckPromptGui-con", "SkillCheckEvent",
+    "SkillCheckFailEvent", "SkillCheckResultEvent", "SkillCheck", "SkillCheckGui"
+}
+
+local skillcheckHash = {}
+for _, name in ipairs(skillcheckNames) do
+    skillcheckHash[name:lower()] = true
+end
+
+local function isSkillCheck(obj)
+    if not obj then return false end
+    local name = obj.Name
+    return skillcheckHash[name:lower()] or name:lower():find("skillcheck") ~= nil
+end
+
+local function findAndInterceptSkillRemotes()
+    for _, obj in ipairs(game:GetDescendants()) do
+        if (obj:IsA("RemoteEvent") or obj:IsA("RemoteFunction")) and isSkillCheck(obj) then
+            if not skillcheckRemotes[obj] then
+                skillcheckRemotes[obj] = obj.FireServer
+                obj.FireServer = function(self, ...)
+                    local args = {...}
+                    if perfectSkillEnabled then
+                        local eventType = ""
+                        if #args > 0 then
+                            if type(args[1]) == "string" then
+                                eventType = args[1]:lower()
+                            end
+                        end
+                        if eventType:find("skillcheck") or eventType:find("skill") or 
+                           obj.Name:lower():find("skillcheck") then
+                            local modifiedArgs = {}
+                            for i, arg in ipairs(args) do
+                                if type(arg) == "string" then
+                                    if arg:lower():find("fail") or arg:lower():find("miss") or 
+                                       arg:lower():find("good") or arg:lower():find("great") or
+                                       arg:lower():find("success") then
+                                        modifiedArgs[i] = "Perfect"
+                                    else
+                                        modifiedArgs[i] = arg
+                                    end
+                                elseif type(arg) == "boolean" then
+                                    modifiedArgs[i] = true
+                                elseif type(arg) == "number" and i == 2 then
+                                    modifiedArgs[i] = 100
+                                elseif type(arg) == "table" then
+                                    local modifiedTable = {}
+                                    for k, v in pairs(arg) do
+                                        if k:lower():find("difficulty") then
+                                            modifiedTable[k] = 0
+                                        elseif k:lower():find("perfectzone") then
+                                            modifiedTable[k] = 100
+                                        elseif k:lower():find("chance") then
+                                            modifiedTable[k] = 100
+                                        elseif k:lower():find("result") then
+                                            modifiedTable[k] = "Perfect"
+                                        elseif k:lower():find("success") then
+                                            modifiedTable[k] = true
+                                        else
+                                            modifiedTable[k] = v
+                                        end
+                                    end
+                                    modifiedArgs[i] = modifiedTable
+                                else
+                                    modifiedArgs[i] = arg
+                                end
+                            end
+                            return skillcheckRemotes[obj](self, unpack(modifiedArgs))
+                        end
+                    end
+                    return skillcheckRemotes[obj](self, ...)
+                end
+            end
+        end
+    end
+end
+
+local function monitorSkillCheckGUIs()
+    local playerGui = LP:FindFirstChild("PlayerGui")
+    if not playerGui then return end
+    local function processSkillGUI(gui)
+        if not perfectSkillEnabled then return end
+        pcall(function()
+            for _, descendant in ipairs(gui:GetDescendants()) do
+                if descendant:IsA("Frame") then
+                    local nameLower = descendant.Name:lower()
+                    if nameLower:find("perfect") or nameLower:find("zone") or 
+                       nameLower:find("bar") or nameLower:find("area") then
+                        descendant.Size = UDim2.new(1, 0, 1, 0)
+                        descendant.Position = UDim2.new(0, 0, 0, 0)
+                        descendant.BackgroundTransparency = 1
+                    end
+                end
+                if descendant:IsA("TextLabel") or descendant:IsA("TextButton") then
+                    local text = descendant.Text:lower()
+                    if text:find("skill") or text:find("check") or 
+                       text:find("press") or text:find("hit") then
+                        descendant.Text = "PERFECT ✓"
+                        descendant.TextColor3 = Color3.fromRGB(0, 255, 0)
+                    end
+                end
+            end
+            gui.BackgroundTransparency = 1
+        end)
+    end
+    local guiConnection = playerGui.ChildAdded:Connect(function(child)
+        if isSkillCheck(child) then
+            processSkillGUI(child)
+        end
+    end)
+    table.insert(skillcheckConnections, guiConnection)
+end
+
+local function forcePerfectSkillChecks()
+    if not perfectSkillEnabled then return end
+    local playerGui = LP:FindFirstChild("PlayerGui")
+    if playerGui then
+        for _, gui in ipairs(playerGui:GetChildren()) do
+            if isSkillCheck(gui) then
+                pcall(function()
+                    gui.Size = UDim2.new(1, 0, 1, 0)
+                    gui.Position = UDim2.new(0, 0, 0, 0)
+                    for _, element in ipairs(gui:GetDescendants()) do
+                        if element:IsA("TextButton") or element:IsA("ImageButton") then
+                            element.Size = UDim2.new(1, 0, 1, 0)
+                            element.Position = UDim2.new(0, 0, 0, 0)
+                        end
+                    end
+                end)
+            end
+        end
+    end
+end
+
+-- Sección SkillCheck
+SurvivorTab:CreateSection("SkillCheck")
+
+SurvivorTab:CreateToggle({
+    Name = "Perfect Skillcheck",
+    CurrentValue = false,
+    Flag = "PerfectSkill",
+    Callback = function(v)
+        perfectSkillEnabled = v
+        if v then
+            findAndInterceptSkillRemotes()
+            monitorSkillCheckGUIs()
+            local heartbeatConn = RunService.Heartbeat:Connect(function()
+                if perfectSkillEnabled then
+                    forcePerfectSkillChecks()
+                end
+            end)
+            table.insert(skillcheckConnections, heartbeatConn)
+            local remoteConn = ReplicatedStorage.DescendantAdded:Connect(function(child)
+                if (child:IsA("RemoteEvent") or child:IsA("RemoteFunction")) and isSkillCheck(child) then
+                    findAndInterceptSkillRemotes()
+                end
+            end)
+            table.insert(skillcheckConnections, remoteConn)
+            Rayfield:Notify({
+                Title = "Perfect Skillcheck",
+                Content = "Activado - Todos los skillchecks serán perfectos al 100%",
+                Duration = 4
+            })
+        else
+            for _, conn in pairs(skillcheckConnections) do
+                conn:Disconnect()
+            end
+            skillcheckConnections = {}
+            for remote, originalFunc in pairs(skillcheckRemotes) do
+                if remote then
+                    remote.FireServer = originalFunc
+                end
+            end
+            skillcheckRemotes = {}
+        end
+    end
+})
+
+-- ============================================
+-- 15. SISTEMA NO SKILLCHECK (SURVIVOR TAB)
+-- ============================================
+
+local noSkillEnabled = false
+local noSkillConnections = {}
+
+local skillcheckNames2 = {
+    "SkillCheckPromptGui",
+    "SkillCheckPromptGui-con", 
+    "SkillCheckEvent",
+    "SkillCheckFailEvent",
+    "SkillCheckResultEvent",
+    "SkillCheck"
+}
+
+local skillcheckHash2 = {}
+for _, name in ipairs(skillcheckNames2) do
+    skillcheckHash2[name:lower()] = true
+end
+
+local function isSkillCheck2(obj)
+    if not obj then return false end
+    local name = obj.Name
+    if skillcheckHash2[name:lower()] then return true end
+    return name:lower():find("skillcheck") ~= nil
+end
+
+local function removeSkillCheck(obj)
+    pcall(function()
+        if obj:IsA("ProximityPrompt") then
+            obj.Enabled = false
+            obj.HoldDuration = 1e9
+        end
+        if obj:IsA("ScreenGui") or obj:IsA("SurfaceGui") or obj:IsA("BillboardGui") then
+            obj.Enabled = false
+            obj.Visible = false
+        end
+        obj:Destroy()
+    end)
+end
+
+local function clearExistingSkillChecks()
+    local places = {
+        LP:FindFirstChild("PlayerGui"),
+        StarterGui,
+        ReplicatedStorage
+    }
+    for _, place in ipairs(places) do
+        if place then
+            for _, child in ipairs(place:GetDescendants()) do
+                if isSkillCheck2(child) then
+                    removeSkillCheck(child)
+                end
+            end
+        end
+    end
+end
+
+local function interceptSkillCheckCreation()
+    for _, conn in pairs(noSkillConnections) do
+        conn:Disconnect()
+    end
+    noSkillConnections = {}
+    local playerGui = LP:FindFirstChild("PlayerGui")
+    if playerGui then
+        table.insert(noSkillConnections, playerGui.ChildAdded:Connect(function(child)
+            if noSkillEnabled and isSkillCheck2(child) then
+                removeSkillCheck(child)
+            end
+        end))
+        table.insert(noSkillConnections, playerGui.DescendantAdded:Connect(function(descendant)
+            if noSkillEnabled and isSkillCheck2(descendant) then
+                removeSkillCheck(descendant)
+            end
+        end))
+    end
+    table.insert(noSkillConnections, StarterGui.ChildAdded:Connect(function(child)
+        if noSkillEnabled and isSkillCheck2(child) then
+            removeSkillCheck(child)
+        end
+    end))
+    table.insert(noSkillConnections, ReplicatedStorage.DescendantAdded:Connect(function(descendant)
+        if noSkillEnabled and isSkillCheck2(descendant) then
+            removeSkillCheck(descendant)
+        end
+    end))
+end
+
+local function interceptSkillCheckRemotes()
+    for _, obj in ipairs(ReplicatedStorage:GetDescendants()) do
+        if obj:IsA("RemoteEvent") or obj:IsA("RemoteFunction") then
+            if isSkillCheck2(obj) then
+                local originalFire = obj.FireServer
+                obj.FireServer = function(self, ...)
+                    if noSkillEnabled then
+                        return true
+                    end
+                    return originalFire(self, ...)
+                end
+            end
+        end
+    end
+end
+
+SurvivorTab:CreateToggle({
+    Name = "No Skillchecks",
+    CurrentValue = false,
+    Flag = "NoSkill",
+    Callback = function(v)
+        noSkillEnabled = v
+        if v then
+            clearExistingSkillChecks()
+            interceptSkillCheckCreation()
+            interceptSkillCheckRemotes()
+            table.insert(noSkillConnections, ReplicatedStorage.DescendantAdded:Connect(function(child)
+                if (child:IsA("RemoteEvent") or child:IsA("RemoteFunction")) and isSkillCheck2(child) then
+                    interceptSkillCheckRemotes()
+                end
+            end))
+        else
+            for _, conn in pairs(noSkillConnections) do
+                conn:Disconnect()
+            end
+            noSkillConnections = {}
+        end
+    end
+})
+
+-- ============================================
+-- 16. SISTEMA INSTA HEAL (SURVIVOR TAB)
+-- ============================================
+
+local instaHealEnabled = false
+local healConnection = nil
+
+local function setupInstaHeal()
+    if healConnection then
+        healConnection:Disconnect()
+        healConnection = nil
+    end
+    healConnection = RunService.Heartbeat:Connect(function()
+        if not instaHealEnabled then return end
+        local char = LP.Character
+        if not char then return end
+        local isHealing = char:GetAttribute("IsHealing")
+        local healProgress = char:GetAttribute("HealProgress") or 0
+        if isHealing == true then
+            pcall(function()
+                char:SetAttribute("HealProgress", 100)
+                local healingTarget = findHealingTarget(char)
+                if healingTarget then
+                    healingTarget:SetAttribute("HealProgress", 100)
+                    healingTarget:SetAttribute("Health", 100)
+                    local humanoid = healingTarget:FindFirstChildOfClass("Humanoid")
+                    if humanoid then
+                        humanoid.Health = humanoid.MaxHealth
+                    end
+                    healingTarget:SetAttribute("Injured", false)
+                    healingTarget:SetAttribute("Downed", false)
+                    healingTarget:SetAttribute("Dying", false)
+                end
+            end)
+        end
+        if char:GetAttribute("IsHealing") ~= true then
+            local nearestInjured = findNearestInjuredSurvivor()
+            if nearestInjured then
+                startAutoHeal(nearestInjured)
+            end
+        end
+    end)
+end
+
+local function findHealingTarget(healerChar)
+    local humanoidRootPart = healerChar:FindFirstChild("HumanoidRootPart")
+    if not humanoidRootPart then return nil end
+    local closestPlayer = nil
+    local closestDistance = math.huge
+    for _, player in ipairs(Players:GetPlayers()) do
+        if player ~= LP and player.Character then
+            local targetChar = player.Character
+            local targetRoot = targetChar:FindFirstChild("HumanoidRootPart")
+            if targetRoot then
+                local distance = (humanoidRootPart.Position - targetRoot.Position).Magnitude
+                if distance < 10 and distance < closestDistance then
+                    closestDistance = distance
+                    closestPlayer = targetChar
+                end
+            end
+        end
+    end
+    return closestPlayer
+end
+
+local function findNearestInjuredSurvivor()
+    local char = LP.Character
+    if not char then return nil end
+    local humanoidRootPart = char:FindFirstChild("HumanoidRootPart")
+    if not humanoidRootPart then return nil end
+    local closestInjured = nil
+    local closestDistance = math.huge
+    for _, player in ipairs(Players:GetPlayers()) do
+        if player ~= LP and player.Character then
+            local targetChar = player.Character
+            local isInjured = targetChar:GetAttribute("Injured") or 
+                            targetChar:GetAttribute("Downed") or
+                            targetChar:GetAttribute("Dying") or false
+            local humanoid = targetChar:FindFirstChildOfClass("Humanoid")
+            if humanoid and humanoid.Health < humanoid.MaxHealth then
+                isInjured = true
+            end
+            if isInjured then
+                local targetRoot = targetChar:FindFirstChild("HumanoidRootPart")
+                if targetRoot then
+                    local distance = (humanoidRootPart.Position - targetRoot.Position).Magnitude
+                    if distance < 15 and distance < closestDistance then
+                        closestDistance = distance
+                        closestInjured = targetChar
+                    end
+                end
+            end
+        end
+    end
+    return closestInjured
+end
+
+local function startAutoHeal(targetChar)
+    if not instaHealEnabled then return end
+    task.spawn(function()
+        local char = LP.Character
+        if char then
+            char:SetAttribute("IsHealing", true)
+            char:SetAttribute("HealProgress", 100)
+            pcall(function()
+                targetChar:SetAttribute("HealProgress", 100)
+                targetChar:SetAttribute("Health", 100)
+                targetChar:SetAttribute("Injured", false)
+                targetChar:SetAttribute("Downed", false)
+                targetChar:SetAttribute("Dying", false)
+                local humanoid = targetChar:FindFirstChildOfClass("Humanoid")
+                if humanoid then
+                    humanoid.Health = humanoid.MaxHealth
+                    if humanoid:GetState() == Enum.HumanoidStateType.FallingDown or 
+                       humanoid:GetState() == Enum.HumanoidStateType.Ragdoll then
+                        humanoid:ChangeState(Enum.HumanoidStateType.Running)
+                    end
+                end
+                sendCompleteHealEvent(targetChar)
+            end)
+            task.wait(0.5)
+            char:SetAttribute("IsHealing", false)
+        end
+    end)
+end
+
+local function sendCompleteHealEvent(targetChar)
+    for _, obj in ipairs(game:GetDescendants()) do
+        if obj:IsA("RemoteEvent") then
+            local nameLower = obj.Name:lower()
+            if nameLower:find("heal") or nameLower:find("revive") or nameLower:find("cure") then
+                pcall(function()
+                    obj:FireServer(targetChar, "CompleteHeal", 100)
+                    obj:FireServer(targetChar, "Revive", true)
+                end)
+            end
+        end
+    end
+end
+
+local function interceptHealProgress()
+    local char = LP.Character
+    if not char then return end
+    local meta = getrawmetatable(char)
+    if meta then
+        local originalIndex = meta.__index
+        local originalNewIndex = meta.__newindex
+        setreadonly(meta, false)
+        meta.__index = newcclosure(function(self, key)
+            if instaHealEnabled and key == "HealProgress" then
+                return 100
+            end
+            return originalIndex(self, key)
+        end)
+        meta.__newindex = newcclosure(function(self, key, value)
+            if instaHealEnabled and key == "HealProgress" then
+                value = 100
+            end
+            return originalNewIndex(self, key, value)
+        end)
+        setreadonly(meta, true)
+    end
+end
+
+-- Sección Heal
+SurvivorTab:CreateSection("Heal")
+
+SurvivorTab:CreateToggle({
+    Name = "Insta Heal",
+    CurrentValue = false,
+    Callback = function(v)
+        instaHealEnabled = v
+        if v then
+            setupInstaHeal()
+            interceptHealProgress()
+            task.spawn(function()
+                local char = LP.Character
+                if char then
+                    char:SetAttribute("HealProgress", 100)
+                end
+            end)
+            LP.CharacterAdded:Connect(function()
+                task.wait(1)
+                if instaHealEnabled then
+                    setupInstaHeal()
+                    interceptHealProgress()
+                    local char = LP.Character
+                    if char then
+                        char:SetAttribute("HealProgress", 100)
+                    end
+                end
+            end)
+        else
+            if healConnection then
+                healConnection:Disconnect()
+                healConnection = nil
+            end
+            task.spawn(function()
+                local char = LP.Character
+                if char then
+                    char:SetAttribute("IsHealing", false)
+                    char:SetAttribute("HealProgress", 0)
+                end
+            end)
+        end
+    end
+})
+
+-- ============================================
+-- 17. SISTEMA ANTI-RALENTIZACIÓN (SURVIVOR TAB)
+-- ============================================          
+
+local antiRalentizacionEnabled = false
+local antiRalentizacionConnection = nil
+local jumpButtonConnection = nil
+local originalWalkspeed = 16
+local originalJumpPower = nil
+local hiddenButtons = {}
+local characterAddedConnection = nil
+
+-- Función para limpiar conexiones
+local function cleanupConnections()
+    if antiRalentizacionConnection then
+        antiRalentizacionConnection:Disconnect()
+        antiRalentizacionConnection = nil
+    end
+    
+    if jumpButtonConnection then
+        jumpButtonConnection:Disconnect()
+        jumpButtonConnection = nil
+    end
+    
+    if characterAddedConnection then
+        characterAddedConnection:Disconnect()
+        characterAddedConnection = nil
+    end
+end
+
+-- Función para restaurar botones
+local function restoreButtons()
+    for button, _ in pairs(hiddenButtons) do
+        if button and button.Parent then
+            button.Visible = true
+            button.BackgroundTransparency = 0
+            if button:IsA("TextButton") then
+                button.TextTransparency = 0
+            else
+                button.ImageTransparency = 0
+            end
+            button.Active = true
+            button.Selectable = true
+        end
+    end
+    hiddenButtons = {}
+end
+
+-- Función para ocultar botones
+local function hideJumpButtons()
+    local playerGui = LP:FindFirstChild("PlayerGui")
+    if not playerGui then return end
+    
+    for _, gui in ipairs(playerGui:GetDescendants()) do
+        if gui:IsA("TextButton") or gui:IsA("ImageButton") then
+            local name = gui.Name:lower()
+            local text = (gui.Text or ""):lower()
+            
+            if name:find("jump") or name:find("saltar") or 
+               text:find("jump") or text:find("saltar") or
+               name:find("space") then
+                
+                if not hiddenButtons[gui] then
+                    hiddenButtons[gui] = true
+                    
+                    gui.Visible = false
+                    gui.BackgroundTransparency = 1
+                    if gui:IsA("TextButton") then
+                        gui.TextTransparency = 1
+                    else
+                        gui.ImageTransparency = 1
+                    end
+                    gui.Active = false
+                    gui.Selectable = false
+                end
+            end
+        end
+    end
+end
+
+-- Función para prevenir ralentización por caída (pero permitir otras acciones)
+local function preventFallSlowdown()
+    if antiRalentizacionConnection then
+        antiRalentizacionConnection:Disconnect()
+    end
+    
+    antiRalentizacionConnection = RunService.Heartbeat:Connect(function()
+        if not antiRalentizacionEnabled then return end
+        
+        local char = LP.Character
+        if not char then return end
+        
+        local humanoid = char:FindFirstChildOfClass("Humanoid")
+        if not humanoid then return end
+        
+        -- Guardar velocidad original
+        if originalWalkspeed == 16 then
+            originalWalkspeed = humanoid.WalkSpeed
+        end
+        
+        local state = humanoid:GetState()
+        
+        -- PREVENIR RALENTIZACIÓN POR CAÍDA DE ALTURA
+        -- Esta es la parte importante que previene el "stun" al caer
+        if state == Enum.HumanoidStateType.Freefall then
+            -- Verificar si es una caída alta (basado en velocidad Y)
+            local rootPart = char:FindFirstChild("HumanoidRootPart")
+            if rootPart then
+                local velocity = rootPart.Velocity
+                -- Si está cayendo muy rápido (probablemente de gran altura)
+                if velocity.Y < -50 then
+                    -- Solo prevenir si es una caída significativa
+                    task.wait(0.1)
+                end
+            end
+        end
+        
+        -- Estados donde SÍ prevenir ralentización/stun
+        if state == Enum.HumanoidStateType.Landed or
+           state == Enum.HumanoidStateType.FallingDown or
+           state == Enum.HumanoidStateType.GettingUp then
+           
+            -- Prevenir el stun/ralentización al aterrizar
+            humanoid:ChangeState(Enum.HumanoidStateType.Running)
+            
+            -- Restaurar velocidad inmediatamente
+            if humanoid.WalkSpeed < originalWalkspeed then
+                humanoid.WalkSpeed = originalWalkspeed
+            end
+            
+            -- Limpiar efectos de stun por caída
+            pcall(function()
+                char:SetAttribute("FallRecovery", 0)
+                char:SetAttribute("StunDuration", 0)
+                
+                if char:GetAttribute("Immobile") == true then
+                    char:SetAttribute("Immobile", false)
+                end
+                
+                -- Detener animaciones de caída/stun
+                local animator = char:FindFirstChildOfClass("Animator")
+                if animator then
+                    for _, track in ipairs(animator:GetPlayingAnimationTracks()) do
+                        local animName = track.Animation.Name:lower()
+                        if animName:find("stun") or animName:find("fall") or 
+                           animName:find("recovery") then
+                            track:Stop(0.1)
+                        end
+                    end
+                end
+            end)
+        end
+        
+        -- Prevenir otros tipos de ralentización (stuns, slows)
+        if humanoid.WalkSpeed < originalWalkspeed then
+            humanoid.WalkSpeed = originalWalkspeed
+            
+            pcall(function()
+                char:SetAttribute("SlowDuration", 0)
+                char:SetAttribute("StunDuration", 0)
+                
+                -- Eliminar efectos de slow
+                for _, effect in ipairs(char:GetChildren()) do
+                    if effect:IsA("BoolValue") then
+                        local nameLower = effect.Name:lower()
+                        if nameLower:find("slow") or nameLower:find("stun") then
+                            effect:Destroy()
+                        end
+                    end
+                end
+                
+                -- Eliminar BodyVelocities de slow
+                local rootPart = char:FindFirstChild("HumanoidRootPart")
+                if rootPart then
+                    for _, force in ipairs(rootPart:GetChildren()) do
+                        if force:IsA("BodyVelocity") then
+                            local nameLower = force.Name:lower()
+                            if nameLower:find("slow") or nameLower:find("stun") then
+                                force:Destroy()
+                            end
+                        end
+                    end
+                end
+            end)
+        end
+        
+        -- IMPORTANTE: NO interferir con otros estados
+        -- Permitir Climbing (saltar ventanas), Swimming, etc.
+        if state == Enum.HumanoidStateType.Climbing or
+           state == Enum.HumanoidStateType.Swimming or
+           state == Enum.HumanoidStateType.Seated then
+            -- NO hacer nada, dejar que estas acciones ocurran normalmente
+            return
+        end
+    end)
+end
+
+-- Sección Anti-Ralentización
+SurvivorTab:CreateSection("Anti-Ralentización")
+
+SurvivorTab:CreateToggle({
+    Name = "Anti-Ralentización",
+    CurrentValue = false,
+    Callback = function(v)
+        antiRalentizacionEnabled = v
+        
+        -- Limpiar todo antes de empezar
+        cleanupConnections()
+        restoreButtons()
+        
+        if v then
+            -- Guardar valores originales
+            local char = LP.Character
+            if char then
+                local humanoid = char:FindFirstChildOfClass("Humanoid")
+                if humanoid then
+                    originalWalkspeed = humanoid.WalkSpeed
+                    originalJumpPower = humanoid.JumpPower
+                end
+            end
+            
+            -- Iniciar prevención de ralentización por caída
+            preventFallSlowdown()
+            
+            -- Ocultar botones después de un delay
+            task.spawn(function()
+                task.wait(1)
+                hideJumpButtons()
+            end)
+            
+            -- Monitorear nuevos botones
+            local playerGui = LP:FindFirstChild("PlayerGui")
+            if playerGui then
+                jumpButtonConnection = playerGui.DescendantAdded:Connect(function(descendant)
+                    if not antiRalentizacionEnabled then return end
+                    
+                    if descendant:IsA("TextButton") or descendant:IsA("ImageButton") then
+                        local name = descendant.Name:lower()
+                        local text = (descendant.Text or ""):lower()
+                        
+                        if name:find("jump") or name:find("saltar") or 
+                           text:find("jump") or text:find("saltar") then
+                            task.wait(0.5)
+                            hideJumpButtons()
+                        end
+                    end
+                end)
+            end
+            
+            -- Conexión para cambio de personaje
+            characterAddedConnection = LP.CharacterAdded:Connect(function()
+                if not antiRalentizacionEnabled then return end
+                
+                task.wait(1)
+                
+                local char = LP.Character
+                if char then
+                    local humanoid = char:FindFirstChildOfClass("Humanoid")
+                    if humanoid then
+                        originalWalkspeed = humanoid.WalkSpeed
+                        originalJumpPower = humanoid.JumpPower
+                    end
+                end
+                
+                task.wait(1)
+                hideJumpButtons()
+            end)
+            
+            Rayfield:Notify({
+                Title = "Anti-Ralentización",
+                Content = "Activado",
+                Duration = 3
+            })
+            
+        else
+            -- Solo restaurar velocidad si está desactivado
+            local char = LP.Character
+            if char then
+                local humanoid = char:FindFirstChildOfClass("Humanoid")
+                if humanoid then
+                    humanoid.WalkSpeed = originalWalkspeed
+                end
+            end
+            
+            Rayfield:Notify({
+                Title = "Anti-Ralentización",
+                Content = "Desactivado",
+                Duration = 3
+            })
+        end
+    end
+})
+
+-- ============================================
+-- 18. SISTEMA KILLER SPEED BOOST (KILLER TAB)
+-- ============================================
+
+-- ANTI-STUN
+local antiStunEnabled = false
+local antiStunConnection = nil
+local originalStunFunctions = {}
+local originalRemoteFunctions = {}
+local lastStunCheck = 0
+local STUN_CHECK_INTERVAL = 0.1
+local lastPalletHit = 0
+local palletCooldown = 1.0
+
+-- Lista más completa incluyendo mayúsculas
+local stunBlacklist = {
+    "IsStunned", "Stunned", "PalletStunned", "PalletStun", "PalletHit",
+    "palletStunned", "palletStun", "palletHit",  -- Versiones con minúscula inicial
+    "StunDuration", "StunTime", "Knockdown", "KnockedDown", "Dazed",
+    "Staggered", "FallingDown", "GettingUp", "Immobile", "RecoveryTime"
+}
+
+-- Lista específica para pallets (con diferentes capitalizaciones)
+local palletKeywords = {
+    -- Con P mayúscula
+    "Pallet", "StunPallet", "PalletStun", "PalletBreak", "PalletSlam",
+    "PalletHit", "PalletImpact", "HitByPallet",
+    
+    -- Con p minúscula  
+    "pallet", "stunpallet", "palletstun", "palletbreak", "palletslam",
+    "palletimpact", "hitbypallet",
+    
+    -- Otros nombres comunes
+    "wood", "plank", "board", "break", "slam", "impact"
+}
+
+-- Función para verificar si es un pallet (considerando mayúsculas/minúsculas)
+local function isPalletRelated(name)
+    local nameLower = name:lower()
+    
+    -- Buscar palabras clave
+    for _, keyword in ipairs(palletKeywords) do
+        if nameLower:find(keyword:lower()) then
+            return true
+        end
+    end
+    
+    -- Buscar específicamente "Pallet" con P mayúscula
+    if name:find("Pallet") then
+        return true
+    end
+    
+    return false
+end
+
+-- Interceptar TODOS los remotes que puedan causar stun
+local function interceptAllStunRemotes()
+    -- Limpiar primero
+    for obj, _ in pairs(originalStunFunctions) do
+        if obj and obj.Parent and obj:IsA("RemoteEvent") and originalStunFunctions[obj] then
+            obj.FireServer = originalStunFunctions[obj]
+        end
+    end
+    for obj, _ in pairs(originalRemoteFunctions) do
+        if obj and obj.Parent and obj:IsA("RemoteFunction") and originalRemoteFunctions[obj] then
+            obj.InvokeServer = originalRemoteFunctions[obj]
+        end
+    end
+    
+    originalStunFunctions = {}
+    originalRemoteFunctions = {}
+    
+    -- Buscar en todos los lugares importantes
+    local searchLocations = {
+        workspace,
+        ReplicatedStorage,
+        game:GetService("ReplicatedFirst"),
+        game:GetService("StarterPack"),
+        game:GetService("StarterPlayer").StarterCharacterScripts,
+        game:GetService("StarterPlayer").StarterPlayerScripts
+    }
+    
+    for _, location in ipairs(searchLocations) do
+        if location then
+            for _, obj in ipairs(location:GetDescendants()) do
+                if (obj:IsA("RemoteEvent") or obj:IsA("RemoteFunction")) and antiStunEnabled then
+                    local name = obj.Name
+                    local nameLower = name:lower()
+                    
+                    -- Verificar si es relacionado con stun O pallet
+                    local isStunRelated = nameLower:find("stun") or 
+                                         nameLower:find("knock") or 
+                                         nameLower:find("daze") or 
+                                         nameLower:find("hit")
+                    
+                    local isPalletRelatedName = isPalletRelated(name)
+                    
+                    if isStunRelated or isPalletRelatedName then
+                        if obj:IsA("RemoteEvent") then
+                            if not originalStunFunctions[obj] then
+                                originalStunFunctions[obj] = obj.FireServer
+                                obj.FireServer = function(self, ...)
+                                    local args = {...}
+                                    local targetChar = LP.Character
+                                    
+                                    if targetChar and antiStunEnabled then
+                                        -- Verificar si este remote está intentando stunearnos
+                                        for _, arg in ipairs(args) do
+                                            -- Si el argumento es nuestro personaje
+                                            if type(arg) == "Instance" and arg:IsA("Model") then
+                                                if arg == targetChar then
+                                                    -- Bloquear completamente stuns de pallet
+                                                    if isPalletRelatedName then
+                                                        local currentTime = tick()
+                                                        if currentTime - lastPalletHit > palletCooldown then
+                                                            lastPalletHit = currentTime
+                                                            print("[Anti-Stun] Bloqueado stun de Pallet:", name)
+                                                        end
+                                                        return nil  -- Bloquear completamente
+                                                    else
+                                                        -- Para otros stuns normales
+                                                        return originalStunFunctions[obj](self, ...)
+                                                    end
+                                                end
+                                            elseif type(arg) == "string" and arg:lower():find("pallet") then
+                                                -- Si el string contiene "pallet"
+                                                local currentTime = tick()
+                                                if currentTime - lastPalletHit > palletCooldown then
+                                                    lastPalletHit = currentTime
+                                                    print("[Anti-Stun] Bloqueado stun de Pallet (string):", name)
+                                                end
+                                                return nil
+                                            end
+                                        end
+                                    end
+                                    return originalStunFunctions[obj](self, ...)
+                                end
+                            end
+                        elseif obj:IsA("RemoteFunction") then
+                            if not originalRemoteFunctions[obj] then
+                                originalRemoteFunctions[obj] = obj.InvokeServer
+                                obj.InvokeServer = function(self, ...)
+                                    local args = {...}
+                                    local targetChar = LP.Character
+                                    
+                                    if targetChar and antiStunEnabled then
+                                        for _, arg in ipairs(args) do
+                                            if type(arg) == "Instance" and arg:IsA("Model") then
+                                                if arg == targetChar then
+                                                    -- Para pallets, devolver false/0
+                                                    if isPalletRelatedName then
+                                                        local currentTime = tick()
+                                                        if currentTime - lastPalletHit > palletCooldown then
+                                                            lastPalletHit = currentTime
+                                                            print("[Anti-Stun] Bloqueado invoke de Pallet:", name)
+                                                        end
+                                                        return false, 0, nil
+                                                    end
+                                                end
+                                            elseif type(arg) == "string" and arg:lower():find("pallet") then
+                                                return false, 0, nil
+                                            end
+                                        end
+                                    end
+                                    return originalRemoteFunctions[obj](self, ...)
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end
+end
+
+-- Función para prevenir stuns activos (especialmente de pallets)
+local function preventActiveStuns()
+    if antiStunConnection then 
+        antiStunConnection:Disconnect()
+    end
+    
+    antiStunConnection = RunService.Heartbeat:Connect(function(deltaTime)
+        if not antiStunEnabled then return end
+        
+        local char = LP.Character
+        if not char then return end
+        
+        lastStunCheck = lastStunCheck + deltaTime
+        if lastStunCheck < STUN_CHECK_INTERVAL then return end
+        lastStunCheck = 0
+        
+        -- Resetear atributos de stun (incluyendo pallets)
+        for _, attr in ipairs(stunBlacklist) do
+            pcall(function()
+                if attr:find("Duration") or attr:find("Time") then
+                    char:SetAttribute(attr, 0)
+                else
+                    char:SetAttribute(attr, false)
+                end
+            end)
+        end
+        
+        -- Buscar y eliminar efectos de stun específicos de pallet
+        for _, child in ipairs(char:GetDescendants()) do
+            pcall(function()
+                -- Eliminar partículas de pallet stun
+                if child:IsA("ParticleEmitter") then
+                    local name = child.Name
+                    local nameLower = name:lower()
+                    if nameLower:find("stun") or nameLower:find("daze") or 
+                       nameLower:find("stars") or nameLower:find("spiral") or
+                       isPalletRelated(name) then
+                        child.Enabled = false
+                        child:Destroy()
+                    end
+                end
+                
+                -- Eliminar efectos de sonido de pallet
+                if child:IsA("Sound") then
+                    local name = child.Name
+                    local nameLower = name:lower()
+                    if nameLower:find("stun") or nameLower:find("hit") or 
+                       nameLower:find("crash") or nameLower:find("break") or
+                       isPalletRelated(name) then
+                        child:Stop()
+                        child:Destroy()
+                    end
+                end
+                
+                -- Eliminar scripts de pallet stun
+                if child:IsA("Script") or child:IsA("LocalScript") then
+                    local name = child.Name
+                    if isPalletRelated(name) or name:lower():find("stun") then
+                        child.Disabled = true
+                        child:Destroy()
+                    end
+                end
+                
+                -- Eliminar valores/boolvalues de pallet stun
+                if child:IsA("BoolValue") or child:IsA("NumberValue") or child:IsA("StringValue") then
+                    local name = child.Name
+                    if isPalletRelated(name) or name:lower():find("stun") then
+                        child:Destroy()
+                    end
+                end
+            end)
+        end
+        
+        -- Manejar el estado del Humanoid (especialmente para pallets)
+        local humanoid = char:FindFirstChildOfClass("Humanoid")
+        if humanoid then
+            -- Estados que indican stun de pallet
+            local state = humanoid:GetState()
+            if state == Enum.HumanoidStateType.FallingDown or 
+               state == Enum.HumanoidStateType.Ragdoll or
+               state == Enum.HumanoidStateType.GettingUp or
+               state == Enum.HumanoidStateType.Physics then
+                
+                -- Forzar salir del estado de stun
+                humanoid:ChangeState(Enum.HumanoidStateType.Running)
+                humanoid.PlatformStand = false
+                humanoid.Sit = false
+            end
+            
+            -- Prevenir reducción de velocidad por pallet
+            if humanoid.WalkSpeed < 16 then
+                humanoid.WalkSpeed = 16
+            end
+            
+            humanoid.AutoRotate = true
+            humanoid.AutoJumpEnabled = true
+        end
+        
+        -- Buscar y eliminar BodyVelocities de pallet stun
+        local rootPart = char:FindFirstChild("HumanoidRootPart") or char:FindFirstChild("Torso")
+        if rootPart then
+            for _, child in ipairs(rootPart:GetChildren()) do
+                pcall(function()
+                    if child:IsA("BodyVelocity") or child:IsA("BodyAngularVelocity") then
+                        local name = child.Name
+                        if isPalletRelated(name) or name:lower():find("stun") then
+                            child:Destroy()
+                        end
+                    end
+                end)
+            end
+        end
+        
+        -- Detener animaciones de pallet stun específicamente
+        local animator = char:FindFirstChildOfClass("Animator")
+        if animator then
+            for _, track in ipairs(animator:GetPlayingAnimationTracks()) do
+                local animName = track.Animation.Name
+                if isPalletRelated(animName) or 
+                   animName:lower():find("stun") or 
+                   animName:lower():find("knock") or
+                   animName:lower():find("fall") or
+                   animName:lower():find("hit") then
+                    track:Stop(0.1)
+                end
+            end
+        end
+    end)
+end
+
+-- Monitorear constantemente por nuevos remotes
+local function monitorNewRemotes()
+    local descendantAddedConnections = {}
+    
+    local function monitorLocation(location)
+        local conn = location.DescendantAdded:Connect(function(descendant)
+            if antiStunEnabled and (descendant:IsA("RemoteEvent") or descendant:IsA("RemoteFunction")) then
+                local name = descendant.Name
+                if isPalletRelated(name) or name:lower():find("stun") then
+                    task.wait(0.3)  -- Esperar a que se configure
+                    interceptAllStunRemotes()
+                end
+            end
+        end)
+        table.insert(descendantAddedConnections, conn)
+    end
+    
+    -- Monitorear múltiples ubicaciones
+    local locationsToMonitor = {workspace, ReplicatedStorage}
+    for _, location in ipairs(locationsToMonitor) do
+        if location then
+            monitorLocation(location)
+        end
+    end
+    
+    return descendantAddedConnections
+end
+
+-- Sección Anti-Stun
+KillerTab:CreateSection("Anti-Stun")
+
+KillerTab:CreateToggle({
+    Name = "Anti-Stun (Incluye Pallets)",
+    CurrentValue = false,
+    Callback = function(v)
+        antiStunEnabled = v
+        
+        if v then
+            -- Interceptar remotes
+            interceptAllStunRemotes()
+            
+            -- Prevenir stuns activos
+            preventActiveStuns()
+            
+            -- Monitorear nuevos remotes
+            monitorNewRemotes()
+            
+            -- Aplicar inmediatamente
+            task.spawn(function()
+                local char = LP.Character
+                if char then
+                    for _, attr in ipairs(stunBlacklist) do
+                        pcall(function()
+                            if attr:find("Duration") or attr:find("Time") then
+                                char:SetAttribute(attr, 0)
+                            else
+                                char:SetAttribute(attr, false)
+                            end
+                        end)
+                    end
+                end
+            end)
+            
+            -- Reconectar cuando el personaje cambie
+            LP.CharacterAdded:Connect(function()
+                task.wait(1)
+                if antiStunEnabled then
+                    interceptAllStunRemotes()
+                    task.wait(0.5)
+                    local char = LP.Character
+                    if char then
+                        for _, attr in ipairs(stunBlacklist) do
+                            pcall(function()
+                                char:SetAttribute(attr, false)
+                            end)
+                        end
+                    end
+                end
+            end)
+            
+            Rayfield:Notify({
+                Title = "Anti-Stun",
+                Content = "Activado - Inmune a pallets y stuns",
+                Duration = 3
+            })
+            
+        else
+            -- Desactivar
+            if antiStunConnection then
+                antiStunConnection:Disconnect()
+                antiStunConnection = nil
+            end
+            
+            -- Restaurar funciones originales
+            for obj, originalFunc in pairs(originalStunFunctions) do
+                if obj and obj.Parent and originalFunc then
+                    obj.FireServer = originalFunc
+                end
+            end
+            
+            for obj, originalFunc in pairs(originalRemoteFunctions) do
+                if obj and obj.Parent and originalFunc then
+                    obj.InvokeServer = originalFunc
+                end
+            end
+            
+            originalStunFunctions = {}
+            originalRemoteFunctions = {}
+            
+            Rayfield:Notify({
+                Title = "Anti-Stun",
+                Content = "Desactivado",
+                Duration = 3
+            })
+        end
+    end
+})
+
+-- ============================================
+-- 20. SISTEMA HITBOX EXPANDER (KILLER TAB)
+-- ============================================
+
+local hitboxExpanderEnabled = false
+local hitboxSize = 8
+local hitboxTransparency = 0.5
+local hitboxColor = Color3.fromRGB(50, 255, 50)
+local survivorHitboxes = {}
+local hitboxConnections = {}
+local damageRemote = nil
+local weaponModel = nil
+
+-- Función para encontrar el arma del jugador
+local function findPlayerWeapon()
+    local char = LP.Character
+    if not char then return nil end
+    
+    -- Buscar armas típicas de killer
+    for _, child in ipairs(char:GetDescendants()) do
+        if child:IsA("Tool") or child:IsA("Model") then
+            local nameLower = child.Name:lower()
+            if nameLower:find("weapon") or nameLower:find("knife") or 
+               nameLower:find("sword") or nameLower:find("axe") or
+               nameLower:find("hammer") or nameLower:find("bat") or
+               nameLower:find("machete") or nameLower:find("wrench") then
+                return child
+            end
+        end
+    end
+    
+    -- Buscar cualquier herramienta que no sea default
+    for _, child in ipairs(char:GetChildren()) do
+        if child:IsA("Tool") and child.Name ~= "Health" then
+            return child
+        end
+    end
+    
+    return nil
+end
+
+-- Función para encontrar el remote de daño
+local function getDamageRemote()
+    if damageRemote then return damageRemote end
+    
+    -- Buscar remotes de daño en orden de prioridad
+    local potentialRemotes = {}
+    
+    -- Buscar en ReplicatedStorage primero (más común)
+    if ReplicatedStorage then
+        for _, obj in ipairs(ReplicatedStorage:GetDescendants()) do
+            if obj:IsA("RemoteEvent") then
+                local nameLower = obj.Name:lower()
+                if nameLower:find("damage") or nameLower:find("hit") or 
+                   nameLower:find("attack") or nameLower:find("take") then
+                    table.insert(potentialRemotes, obj)
+                end
+            end
+        end
+    end
+    
+    -- Buscar en workspace
+    for _, obj in ipairs(workspace:GetDescendants()) do
+        if obj:IsA("RemoteEvent") then
+            local nameLower = obj.Name:lower()
+            if nameLower:find("damage") or nameLower:find("hit") or 
+               nameLower:find("attack") then
+                table.insert(potentialRemotes, obj)
+            end
+        end
+    end
+    
+    damageRemote = potentialRemotes[1]
+    return damageRemote
+end
+
+-- Función para aplicar daño al survivor
+local function applyDamageToSurvivor(survivorCharacter)
+    if not survivorCharacter or not survivorCharacter.Parent then return end
+    
+    local remote = getDamageRemote()
+    if remote then
+        -- Intentar diferentes formatos de llamada al remote
+        local success = pcall(function()
+            remote:FireServer(survivorCharacter, "Hit", 1)
+        end)
+        
+        if not success then
+            pcall(function()
+                remote:FireServer(survivorCharacter)
+            end)
+        end
+        
+        if not success then
+            pcall(function()
+                remote:FireServer("Hit", survivorCharacter)
+            end)
+        end
+    else
+        -- Fallback directo al humanoid
+        pcall(function()
+            local humanoid = survivorCharacter:FindFirstChildOfClass("Humanoid")
+            if humanoid then
+                humanoid.Health = humanoid.Health - 30
+            end
+        end)
+    end
+end
+
+-- Función para crear hitbox para un survivor
+local function createSurvivorHitbox(character)
+    if not character or not character.Parent then return nil
+      end
+    
+    -- Limpiar hitbox existente
+    if survivorHitboxes[character] then
+        survivorHitboxes[character]:Destroy()
+        survivorHitboxes[character] = nil
+    end
+    
+    local humanoidRootPart = character:FindFirstChild("HumanoidRootPart")
+    if not humanoidRootPart then return nil
+    end
+   
+    -- Crear hitbox
+    local hitbox = Instance.new("Part")
+    hitbox.Name = "ExpandedHitbox"
+    hitbox.Size = Vector3.new(hitboxSize, hitboxSize, hitboxSize)
+    hitbox.Transparency = hitboxTransparency
+    hitbox.Color = hitboxColor
+    hitbox.Material = Enum.Material.Neon
+    hitbox.CanCollide = false
+    hitbox.Anchored = false
+    hitbox.CastShadow = false
+    hitbox.Massless = true
+    hitbox.CanQuery = true
+    hitbox.CanTouch = true
+    
+    -- Crear weld para mantenerlo pegado al personaje
+    local weld = Instance.new("Weld")
+    weld.Part0 = humanoidRootPart
+    weld.Part1 = hitbox
+    weld.C0 = CFrame.new(0, 0, 0)
+    weld.Parent = hitbox
+    
+    hitbox.Parent = character
+    survivorHitboxes[character] = hitbox
+    
+    -- Agregar detector de colisión
+    local touchedConnection = hitbox.Touched:Connect(function(hit)
+        if not hitboxExpanderEnabled then return end
+        
+        -- Verificar si lo que tocó es parte del arma del jugador
+        local weaponPart = hit
+        
+        -- Subir en la jerarquía para encontrar el arma o el personaje del killer
+        while weaponPart and weaponPart ~= workspace do
+            if weaponPart:IsA("Model") then
+                local player = Players:GetPlayerFromCharacter(weaponPart)
+                
+                -- Si es el arma del killer
+                if weaponPart.Name:find("Weapon") or weaponPart:IsA("Tool") then
+                    -- Verificar si pertenece al jugador local
+                    local parentPlayer = Players:GetPlayerFromCharacter(weaponPart.Parent)
+                    if parentPlayer == LP then
+                        applyDamageToSurvivor(character)
+                        break
+                    end
+                end
+                
+                -- Si es el personaje del killer
+                if player == LP then
+                    applyDamageToSurvivor(character)
+                    break
+                end
+            end
+            
+            -- Si es una parte del arma
+            if weaponPart:IsA("BasePart") then
+                local model = weaponPart:FindFirstAncestorWhichIsA("Model")
+                if model then
+                    local player = Players:GetPlayerFromCharacter(model)
+                    if player == LP then
+                        applyDamageToSurvivor(character)
+                        break
+                    end
+                    
+                    -- Verificar si es un arma
+                    if model.Name:find("Weapon") or model:IsA("Tool") then
+                        local ownerPlayer = Players:GetPlayerFromCharacter(model.Parent)
+                        if ownerPlayer == LP then
+                            applyDamageToSurvivor(character)
+                            break
+                        end
+                    end
+                end
+            end
+            
+            weaponPart = weaponPart.Parent
+        end
+    end)
+    
+    hitboxConnections[hitbox] = touchedConnection
+    
+    return hitbox
+end
+
+-- Función para crear hitboxes para todos los survivors
+local function createHitboxesForAllSurvivors()
+    for _, player in ipairs(Players:GetPlayers()) do
+        if player ~= LP and player.Character then
+            createSurvivorHitbox(player.Character)
+        end
+    end
+end
+
+-- Función para actualizar tamaño de hitboxes
+local function updateHitboxSizes()
+    for character, hitbox in pairs(survivorHitboxes) do
+        if character and character.Parent and hitbox then
+            hitbox.Size = Vector3.new(hitboxSize, hitboxSize, hitboxSize)
+        end
+    end
+end
+
+-- Función para actualizar transparencia
+local function updateHitboxTransparency()
+    for character, hitbox in pairs(survivorHitboxes) do
+        if character and character.Parent and hitbox then
+            hitbox.Transparency = hitboxTransparency
+        end
+    end
+end
+
+-- Función para actualizar color
+local function updateHitboxColor()
+    for character, hitbox in pairs(survivorHitboxes) do
+        if character and character.Parent and hitbox then
+            hitbox.Color = hitboxColor
+        end
+    end
+end
+
+-- Función para limpiar todas las hitboxes
+local function cleanupAllHitboxes()
+    for character, hitbox in pairs(survivorHitboxes) do
+        if hitbox then 
+            hitbox:Destroy() 
+        end
+    end
+    survivorHitboxes = {}
+    
+    for hitbox, connection in pairs(hitboxConnections) do
+        if connection then 
+            connection:Disconnect() 
+        end
+    end
+    hitboxConnections = {}
+end
+
+-- Función para configurar monitoreo de jugadores
+local function setupPlayerMonitoring()
+    -- Monitorear cuando nuevos jugadores se unen
+    local playerAddedConn = Players.PlayerAdded:Connect(function(player)
+        player.CharacterAdded:Connect(function(character)
+            task.wait(0.5)
+            if hitboxExpanderEnabled and player ~= LP then
+                createSurvivorHitbox(character)
+            end
+        end)
+    end)
+    
+    table.insert(hitboxConnections, playerAddedConn)
+    
+    -- Para jugadores existentes
+    for _, player in ipairs(Players:GetPlayers()) do
+        if player ~= LP then
+            local charConn = player.CharacterAdded:Connect(function(character)
+                task.wait(0.5)
+                if hitboxExpanderEnabled then
+                    createSurvivorHitbox(character)
+                end
+            end)
+            table.insert(hitboxConnections, charConn)
+        end
+    end
+end
+
+-- Función para forzar hit en todos los survivors cercanos
+local function forceHitAllNearby()
+    if not hitboxExpanderEnabled then return end
+    
+    local char = LP.Character
+    if not char then return end
+    
+    local rootPart = char:FindFirstChild("HumanoidRootPart")
+    if not rootPart then return end
+    
+    local hitCount = 0
+    
+    for player, hitbox in pairs(survivorHitboxes) do
+        if player and player.Parent and hitbox then
+            local survivorRoot = player:FindFirstChild("HumanoidRootPart")
+            if survivorRoot then
+                local distance = (rootPart.Position - survivorRoot.Position).Magnitude
+                
+                -- Si está dentro del rango de la hitbox expandida
+                if distance <= hitboxSize * 2 then
+                    applyDamageToSurvivor(player)
+                    hitCount = hitCount + 1
+                end
+            end
+        end
+    end
+    
+    if hitCount > 0 then
+        Rayfield:Notify({
+            Title = "Hitbox Expander",
+            Content = string.format("Golpeados %d survivors", hitCount),
+            Duration = 2
+        })
+    end
+end
+
+-- Sección Hitbox Expander
+KillerTab:CreateSection("Hitbox Expander")
+
+KillerTab:CreateToggle({
+    Name = "Hitbox Expander",
+    CurrentValue = false,
+    Callback = function(v)
+        hitboxExpanderEnabled = v
+        
+        if v then
+            -- Encontrar arma del jugador
+            weaponModel = findPlayerWeapon()
+            
+            -- Crear hitboxes
+            createHitboxesForAllSurvivors()
+            setupPlayerMonitoring()
+            
+            Rayfield:Notify({
+                Title = "Hitbox Expander",
+                Content = "Activado - Hitboxes verdes creadas",
+                Duration = 3
+            })
+        else
+            cleanupAllHitboxes()
+            weaponModel = nil
+            
+            Rayfield:Notify({
+                Title = "Hitbox Expander",
+                Content = "Desactivado - Hitboxes removidas",
+                Duration = 3
+            })
+        end
+    end
+})
+
+KillerTab:CreateSlider({
+    Name = "Hitbox Size",
+    Range = {5, 25},
+    Increment = 1,
+    Suffix = " studs",
+    CurrentValue = hitboxSize,
+    Callback = function(v)
+        hitboxSize = v
+        if hitboxExpanderEnabled then
+            updateHitboxSizes()
+        end
+    end
+})
+
+KillerTab:CreateSlider({
+    Name = "Hitbox Transparency",
+    Range = {0.1, 0.9},
+    Increment = 0.1,
+    CurrentValue = hitboxTransparency,
+    Callback = function(v)
+        hitboxTransparency = v
+        if hitboxExpanderEnabled then
+            updateHitboxTransparency()
+        end
+    end
+})
+
+KillerTab:CreateColorPicker({
+    Name = "Hitbox Color",
+    Color = hitboxColor,
+    Callback = function(v)
+        hitboxColor = v
+        if hitboxExpanderEnabled then
+            updateHitboxColor()
+        end
+    end
+})
+
+KillerTab:CreateButton({
+    Name = "Forzar Hit Cercanos",
+    Callback = function()
+        forceHitAllNearby()
+    end
+})
+
+-- ============================================
+-- 21. SISTEMA FULL BREAK GENERATOR (KILLER TAB)
+-- ============================================
+
+-- Sección Generator
+KillerTab:CreateSection("Generator")
+
+KillerTab:CreateToggle({
+    Name = "Full Break Generator",
+    CurrentValue = false,
+    Callback = function(v)
+        fullBreakEnabled = v
+        if v then
+            local generatorRemotes = {}
+            for _, obj in ipairs(game:GetDescendants()) do
+                if obj:IsA("RemoteEvent") then
+                    local nameLower = obj.Name:lower()
+                    if nameLower:find("generator") or nameLower:find("damage") or nameLower:find("kick") or nameLower:find("break") then
+                        generatorRemotes[obj] = obj.FireServer
+                    end
+                end
+            end
+            
+            local function forceGeneratorToZero(generator)
+                if not generator or not generator.Parent then return end
+                pcall(function()
+                    generator:SetAttribute("Progress", 0)
+                    generator:SetAttribute("progress", 0)
+                    generator:SetAttribute("CurrentProgress", 0)
+                    generator:SetAttribute("Repaired", false)
+                    generator:SetAttribute("Broken", true)
+                    generator:SetAttribute("Damage", 100)
+                    for _, script in ipairs(generator:GetDescendants()) do
+                        if script:IsA("Script") or script:IsA("ModuleScript") then
+                            local env = getfenv(script)
+                            if env.progress then env.progress = 0 end
+                            if env.Progress then env.Progress = 0 end
+                            if env.currentProgress then env.currentProgress = 0 end
+                        end
+                    end
+                end)
+                task.spawn(function()
+                    for i = 1, 3 do
+                        for remote, originalFire in pairs(generatorRemotes) do
+                            pcall(function()
+                                remote:FireServer(generator, "Damage", 100)
+                                remote:FireServer(generator, "Break", true)
+                                remote:FireServer(generator, "Reset", 0)
+                            end)
+                        end
+                        task.wait(0.05)
+                    end
+                end)
+                task.spawn(function()
+                    for _, effect in ipairs(generator:GetDescendants()) do
+                        if effect:IsA("ParticleEmitter") then
+                            if effect.Name:lower():find("smoke") or effect.Name:lower():find("spark") then
+                                effect.Enabled = true
+                            end
+                        end
+                    end
+                    for _, part in ipairs(generator:GetDescendants()) do
+                        if part:IsA("BasePart") then
+                            part.BrickColor = BrickColor.new("Really red")
+                            part.Material = Enum.Material.CrackedLava
+                        end
+                    end
+                end)
+            end
+            
+            local function setupGeneratorKickInterception()
+                local killerChar = LP.Character
+                if not killerChar then return end
+                for _, tool in ipairs(killerChar:GetChildren()) do
+                    if tool:IsA("Tool") then
+                        for _, script in ipairs(tool:GetDescendants()) do
+                            if script:IsA("LocalScript") then
+                                pcall(function()
+                                    local env = getfenv(script)
+                                    if env.onHit then
+                                        local originalOnHit = env.onHit
+                                        env.onHit = function(target, ...)
+                                            local result = originalOnHit(target, ...)
+                                            if fullBreakEnabled and target and target:IsA("Model") then
+                                                local nameLower = target.Name:lower()
+                                                if nameLower:find("generator") or nameLower:find("gen_") then
+                                                    task.wait(0.1)
+                                                    forceGeneratorToZero(target)
+                                                end
+                                            end
+                                            return result
+                                        end
+                                    end
+                                end)
+                            end
+                        end
+                    end
+                end
+            end
+            
+            for remote, originalFire in pairs(generatorRemotes) do
+                remote.FireServer = newcclosure(function(self, ...)
+                    local args = {...}
+                    if fullBreakEnabled and #args >= 1 then
+                        local target = args[1]
+                        if typeof(target) == "Instance" and target:IsA("Model") then
+                            local nameLower = target.Name:lower()
+                            if nameLower:find("generator") or nameLower:find("gen_") then
+                                local playerChar = LP.Character
+                                if playerChar then
+                                    local modifiedArgs = {}
+                                    for i, arg in ipairs(args) do
+                                        if i == 2 and type(arg) == "string" and arg:lower():find("damage") then
+                                            modifiedArgs[i] = "FullBreak"
+                                        elseif i == 3 and type(arg) == "number" then
+                                            modifiedArgs[i] = 100
+                                        else
+                                            modifiedArgs[i] = arg
+                                        end
+                                    end
+                                    local result = originalFire(self, unpack(modifiedArgs))
+                                    task.spawn(function()
+                                        task.wait(0.2)
+                                        forceGeneratorToZero(target)
+                                    end)
+                                    return result
+                                end
+                            end
+                        end
+                    end
+                    return originalFire(self, ...)
+                end)
+            end
+            
+            setupGeneratorKickInterception()
+            LP.CharacterAdded:Connect(function()
+                task.wait(1)
+                if fullBreakEnabled then
+                    setupGeneratorKickInterception()
+                end
+            end)
+        end
+    end
+})
+
+-- ============================================
+-- 22. SISTEMA LOW GRAPHICS (GRAPHICS TAB)
+-- ============================================
+
+local lowGraphicsEnabled = false
+local originalShadows = true
+
+local function applySimpleLowGraphics()
+    if not lowGraphicsEnabled then return end
+    pcall(function()
+        Lighting.GlobalShadows = false
+        for _, part in ipairs(Workspace:GetDescendants()) do
+            if part:IsA("BasePart") then
+                part.CastShadow = false
+            end
+        end
+    end)
+end
+
+local function restoreSimpleGraphics()
+    pcall(function()
+        Lighting.GlobalShadows = originalShadows
+        for _, part in ipairs(Workspace:GetDescendants()) do
+            if part:IsA("BasePart") then
+                part.CastShadow = true
+            end
+        end
+    end)
+end
+
+-- Sección Optimization
+GraphicsTab:CreateSection("Optimization")
+
+GraphicsTab:CreateToggle({
+    Name = "Low Graphics",
+    CurrentValue = false,
+    Flag = "NoShadows",
+    Callback = function(s) 
+        lowGraphicsEnabled = s
+        if s then 
+            originalShadows = Lighting.GlobalShadows
+            applySimpleLowGraphics()
+            Rayfield:Notify({
+                Title = "Shadows Desactivadas",
+                Content = "Mejor rendimiento activado",
+                Duration = 2
+            })
+        else 
+            restoreSimpleGraphics()
+            Rayfield:Notify({
+                Title = "Shadows Activadas",
+                Content = "Calidad gráfica restaurada",
+                Duration = 2
+            })
+        end
+    end
+})
+
+-- ============================================
+-- 23. SISTEMA MISC (MISC TAB)
+-- ============================================
+
+-- Sección Utilities
+MiscTab:CreateSection("Utilities")
+
+MiscTab:CreateButton({
+    Name = "Limpiar Todo",
+    Callback = function()
+        stopOptimizedESPLoop()
+        stopGeneratorESPLoop()
+        stopUniversalSpeedWatcher()
+        stopGenBoostWatcher()
+        for _, conn in pairs(skillcheckConnections) do
+            conn:Disconnect()
+        end
+        for _, conn in pairs(noSkillConnections) do
+            conn:Disconnect()
+        end 
+        Rayfield:Notify({
+            Title = "Limpieza Completada",
+            Content = "Todos los hacks han sido desactivados",
+            Duration = 3
+        })
+    end
+})
+
+-- ============================================
+-- 24. INICIALIZACIÓN FINAL
+-- ============================================
+
+task.spawn(function()
+    task.wait(2)
+    Rayfield:LoadConfiguration()
+    Rayfield:Notify({
+        Title = "LoreOnTop",
+        Content = "Script cargado",
+        Duration = 5,
+        Image = "rbxassetid://4483345998"
+    })
+end)
 local RunService = game:GetService("RunService")
 local Workspace = game:GetService("Workspace")
 local Lighting = game:GetService("Lighting")

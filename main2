@@ -2874,7 +2874,7 @@ KillerTab:CreateSection("Hitbox")
         end
     })
     
-    tab:CreateSlider({
+    KillerTab:CreateSlider({
         Name = "Hitbox Size",
         Range = {5, 25},
         Increment = 1,
@@ -2888,7 +2888,7 @@ KillerTab:CreateSection("Hitbox")
         end
     })
     
-    tab:CreateSlider({
+    KillerTab:CreateSlider({
         Name = "Hitbox Transparency",
         Range = {0.1, 0.9},
         Increment = 0.1,
@@ -2901,7 +2901,7 @@ KillerTab:CreateSection("Hitbox")
         end
     })
     
-    tab:CreateColorPicker({
+    KillerTab:CreateColorPicker({
         Name = "Hitbox Color",
         Color = hitboxColor,
         Callback = function(v)

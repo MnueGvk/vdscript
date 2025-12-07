@@ -1841,8 +1841,6 @@ local function preventFallSlowdown()
         
         local state = humanoid:GetState()
         
-        -- PREVENIR RALENTIZACIÓN POR CAÍDA DE ALTURA
-        -- Esta es la parte importante que previene el "stun" al caer
         if state == Enum.HumanoidStateType.Freefall then
             -- Verificar si es una caída alta (basado en velocidad Y)
             local rootPart = char:FindFirstChild("HumanoidRootPart")
@@ -2030,7 +2028,7 @@ SurvivorTab:CreateToggle({
 })
 
 -- ============================================
--- 18. SISTEMA KILLER SPEED BOOST (KILLER TAB)
+-- 18. SISTEMA ANTI-STUN (KILLER TAB)
 -- ============================================
 
 local antiStunEnabled = false
@@ -2416,7 +2414,7 @@ end
 KillerTab:CreateSection("Anti-Efectos")
 
 KillerTab:CreateToggle({
-    Name = "Anti-Stun (Pallets y Stuns)",
+    Name = "Anti-Stun",
     CurrentValue = false,
     Callback = function(v)
         antiStunEnabled = v
@@ -2520,104 +2518,56 @@ KillerTab:CreateToggle({
 -- 20. SISTEMA HITBOX EXPANDER (KILLER TAB)
 -- ============================================
 
+-- ============================================
+-- HITBOX EXPANDER (ADAPTADO DEL KILLER TOOLKIT)
+-- ============================================
+
 local hitboxExpanderEnabled = false
-local hitboxSize = 8
-local hitboxTransparency = 0.5
-local hitboxColor = Color3.fromRGB(50, 255, 50)
-local survivorHitboxes = {}
+local hitboxSize = 15
+local hitboxTransparency = 0.6
+local hitboxColor = Color3.fromRGB(255, 0, 0)  -- Rojo por defecto
+local originalSizes = {}
 local hitboxConnections = {}
 local damageRemote = nil
-local weaponModel = nil
-
--- Función para encontrar el arma del jugador
-local function findPlayerWeapon()
-    local char = LP.Character
-    if not char then return nil end
-    
-    -- Buscar armas típicas de killer
-    for _, child in ipairs(char:GetDescendants()) do
-        if child:IsA("Tool") or child:IsA("Model") then
-            local nameLower = child.Name:lower()
-            if nameLower:find("weapon") or nameLower:find("knife") or 
-               nameLower:find("sword") or nameLower:find("axe") or
-               nameLower:find("hammer") or nameLower:find("bat") or
-               nameLower:find("machete") or nameLower:find("wrench") then
-                return child
-            end
-        end
-    end
-    
-    -- Buscar cualquier herramienta que no sea default
-    for _, child in ipairs(char:GetChildren()) do
-        if child:IsA("Tool") and child.Name ~= "Health" then
-            return child
-        end
-    end
-    
-    return nil
-end
 
 -- Función para encontrar el remote de daño
 local function getDamageRemote()
     if damageRemote then return damageRemote end
     
-    -- Buscar remotes de daño en orden de prioridad
-    local potentialRemotes = {}
-    
-    -- Buscar en ReplicatedStorage primero (más común)
-    if ReplicatedStorage then
-        for _, obj in ipairs(ReplicatedStorage:GetDescendants()) do
-            if obj:IsA("RemoteEvent") then
-                local nameLower = obj.Name:lower()
-                if nameLower:find("damage") or nameLower:find("hit") or 
-                   nameLower:find("attack") or nameLower:find("take") then
-                    table.insert(potentialRemotes, obj)
-                end
-            end
-        end
-    end
-    
-    -- Buscar en workspace
-    for _, obj in ipairs(workspace:GetDescendants()) do
+    -- Buscar remotes de daño
+    for _, obj in ipairs(game:GetDescendants()) do
         if obj:IsA("RemoteEvent") then
             local nameLower = obj.Name:lower()
             if nameLower:find("damage") or nameLower:find("hit") or 
-               nameLower:find("attack") then
-                table.insert(potentialRemotes, obj)
+               nameLower:find("attack") or nameLower:find("take") then
+                damageRemote = obj
+                return damageRemote
             end
         end
     end
-    
-    damageRemote = potentialRemotes[1]
-    return damageRemote
+    return nil
 end
 
--- Función para aplicar daño al survivor
-local function applyDamageToSurvivor(survivorCharacter)
-    if not survivorCharacter or not survivorCharacter.Parent then return end
+-- Función para aplicar daño
+local function applyDamageToPlayer(targetPlayer)
+    if not targetPlayer or not targetPlayer.Character then return end
     
     local remote = getDamageRemote()
     if remote then
-        -- Intentar diferentes formatos de llamada al remote
+        -- Intentar diferentes formatos
         local success = pcall(function()
-            remote:FireServer(survivorCharacter, "Hit", 1)
+            remote:FireServer(targetPlayer.Character, "Hit", 1)
         end)
         
         if not success then
             pcall(function()
-                remote:FireServer(survivorCharacter)
-            end)
-        end
-        
-        if not success then
-            pcall(function()
-                remote:FireServer("Hit", survivorCharacter)
+                remote:FireServer(targetPlayer.Character)
             end)
         end
     else
-        -- Fallback directo al humanoid
+        -- Fallback directo
         pcall(function()
-            local humanoid = survivorCharacter:FindFirstChildOfClass("Humanoid")
+            local humanoid = targetPlayer.Character:FindFirstChildOfClass("Humanoid")
             if humanoid then
                 humanoid.Health = humanoid.Health - 30
             end
@@ -2625,178 +2575,102 @@ local function applyDamageToSurvivor(survivorCharacter)
     end
 end
 
--- Función para crear hitbox para un survivor
-local function createSurvivorHitbox(character)
-    if not character or not character.Parent then return nil
-    end
+-- Función para aplicar/expandir hitboxes
+local function applyHitboxExpander()
+    if not hitboxExpanderEnabled then return end
     
-    -- Limpiar hitbox existente
-    if survivorHitboxes[character] then
-        survivorHitboxes[character]:Destroy()
-        survivorHitboxes[character] = nil
-    end
-    
-    local humanoidRootPart = character:FindFirstChild("HumanoidRootPart")
-    if not humanoidRootPart then return nil
-    end 
-    
-    -- Crear hitbox
-    local hitbox = Instance.new("Part")
-    hitbox.Name = "ExpandedHitbox"
-    hitbox.Size = Vector3.new(hitboxSize, hitboxSize, hitboxSize)
-    hitbox.Transparency = hitboxTransparency
-    hitbox.Color = hitboxColor
-    hitbox.Material = Enum.Material.Neon
-    hitbox.CanCollide = false
-    hitbox.Anchored = false
-    hitbox.CastShadow = false
-    hitbox.Massless = true
-    hitbox.CanQuery = true
-    hitbox.CanTouch = true
-    
-    -- Crear weld para mantenerlo pegado al personaje
-    local weld = Instance.new("Weld")
-    weld.Part0 = humanoidRootPart
-    weld.Part1 = hitbox
-    weld.C0 = CFrame.new(0, 0, 0)
-    weld.Parent = hitbox
-    
-    hitbox.Parent = character
-    survivorHitboxes[character] = hitbox
-    
-    -- Agregar detector de colisión
-    local touchedConnection = hitbox.Touched:Connect(function(hit)
-        if not hitboxExpanderEnabled then return end
-        
-        -- Verificar si lo que tocó es parte del arma del jugador
-        local weaponPart = hit
-        
-        -- Subir en la jerarquía para encontrar el arma o el personaje del killer
-        while weaponPart and weaponPart ~= workspace do
-            if weaponPart:IsA("Model") then
-                local player = Players:GetPlayerFromCharacter(weaponPart)
-                
-                -- Si es el arma del killer
-                if weaponPart.Name:find("Weapon") or weaponPart:IsA("Tool") then
-                    -- Verificar si pertenece al jugador local
-                    local parentPlayer = Players:GetPlayerFromCharacter(weaponPart.Parent)
-                    if parentPlayer == LP then
-                        applyDamageToSurvivor(character)
-                        break
-                    end
+    for _, player in ipairs(Players:GetPlayers()) do
+        if player ~= LP and player.Character then
+            local head = player.Character:FindFirstChild("Head")
+            if head then
+                -- Guardar tamaño original
+                if not originalSizes[head] then
+                    originalSizes[head] = {
+                        Size = head.Size,
+                        Transparency = head.Transparency,
+                        CanCollide = head.CanCollide,
+                        Massless = head.Massless,
+                        Color = head.Color
+                    }
                 end
                 
-                -- Si es el personaje del killer
-                if player == LP then
-                    applyDamageToSurvivor(character)
-                    break
-                end
-            end
-            
-            -- Si es una parte del arma
-            if weaponPart:IsA("BasePart") then
-                local model = weaponPart:FindFirstAncestorWhichIsA("Model")
-                if model then
-                    local player = Players:GetPlayerFromCharacter(model)
-                    if player == LP then
-                        applyDamageToSurvivor(character)
-                        break
-                    end
+                -- Aplicar hitbox expandida
+                head.Size = Vector3.new(hitboxSize, hitboxSize, hitboxSize)
+                head.Transparency = hitboxTransparency
+                head.CanCollide = false
+                head.Massless = true
+                head.Color = hitboxColor
+                head.Material = Enum.Material.Neon
+                
+                -- Si el jugador está cerca, aplicar daño automático
+                local myChar = LP.Character
+                if myChar then
+                    local myRoot = myChar:FindFirstChild("HumanoidRootPart")
+                    local targetRoot = player.Character:FindFirstChild("HumanoidRootPart")
                     
-                    -- Verificar si es un arma
-                    if model.Name:find("Weapon") or model:IsA("Tool") then
-                        local ownerPlayer = Players:GetPlayerFromCharacter(model.Parent)
-                        if ownerPlayer == LP then
-                            applyDamageToSurvivor(character)
-                            break
+                    if myRoot and targetRoot then
+                        local distance = (myRoot.Position - targetRoot.Position).Magnitude
+                        if distance <= hitboxSize * 1.5 then
+                            applyDamageToPlayer(player)
                         end
                     end
                 end
             end
-            
-            weaponPart = weaponPart.Parent
-        end
-    end)
-    
-    hitboxConnections[hitbox] = touchedConnection
-    
-    return hitbox
-end
-
--- Función para crear hitboxes para todos los survivors
-local function createHitboxesForAllSurvivors()
-    for _, player in ipairs(Players:GetPlayers()) do
-        if player ~= LP and player.Character then
-            createSurvivorHitbox(player.Character)
         end
     end
 end
 
--- Función para actualizar tamaño de hitboxes
-local function updateHitboxSizes()
-    for character, hitbox in pairs(survivorHitboxes) do
-        if character and character.Parent and hitbox then
-            hitbox.Size = Vector3.new(hitboxSize, hitboxSize, hitboxSize)
+-- Función para restaurar hitboxes originales
+local function restoreOriginalHitboxes()
+    for part, data in pairs(originalSizes) do
+        if part and part.Parent then
+            pcall(function()
+                part.Size = data.Size
+                part.Transparency = data.Transparency
+                part.CanCollide = data.CanCollide
+                part.Massless = data.Massless
+                part.Color = data.Color
+                part.Material = Enum.Material.Plastic
+            end)
         end
     end
-end
-
--- Función para actualizar transparencia
-local function updateHitboxTransparency()
-    for character, hitbox in pairs(survivorHitboxes) do
-        if character and character.Parent and hitbox then
-            hitbox.Transparency = hitboxTransparency
-        end
-    end
-end
-
--- Función para actualizar color
-local function updateHitboxColor()
-    for character, hitbox in pairs(survivorHitboxes) do
-        if character and character.Parent and hitbox then
-            hitbox.Color = hitboxColor
-        end
-    end
-end
-
--- Función para limpiar todas las hitboxes
-local function cleanupAllHitboxes()
-    for character, hitbox in pairs(survivorHitboxes) do
-        if hitbox then 
-            hitbox:Destroy() 
-        end
-    end
-    survivorHitboxes = {}
-    
-    for hitbox, connection in pairs(hitboxConnections) do
-        if connection then 
-            connection:Disconnect() 
-        end
-    end
-    hitboxConnections = {}
+    originalSizes = {}
 end
 
 -- Función para configurar monitoreo de jugadores
 local function setupPlayerMonitoring()
-    -- Monitorear cuando nuevos jugadores se unen
+    -- Limpiar conexiones anteriores
+    for _, conn in ipairs(hitboxConnections) do
+        conn:Disconnect()
+    end
+    hitboxConnections = {}
+    
+    -- Monitorear nuevos jugadores
     local playerAddedConn = Players.PlayerAdded:Connect(function(player)
         player.CharacterAdded:Connect(function(character)
             task.wait(0.5)
-            if hitboxExpanderEnabled and player ~= LP then
-                createSurvivorHitbox(character)
+            if hitboxExpanderEnabled then
+                -- Limpiar tamaño original al cambiar de personaje
+                local head = character:FindFirstChild("Head")
+                if head and originalSizes[head] then
+                    originalSizes[head] = nil
+                end
             end
         end)
     end)
-    
     table.insert(hitboxConnections, playerAddedConn)
     
-    -- Para jugadores existentes
+    -- Monitorear jugadores existentes
     for _, player in ipairs(Players:GetPlayers()) do
         if player ~= LP then
             local charConn = player.CharacterAdded:Connect(function(character)
                 task.wait(0.5)
                 if hitboxExpanderEnabled then
-                    createSurvivorHitbox(character)
+                    -- Limpiar tamaño original al cambiar de personaje
+                    local head = character:FindFirstChild("Head")
+                    if head and originalSizes[head] then
+                        originalSizes[head] = nil
+                    end
                 end
             end)
             table.insert(hitboxConnections, charConn)
@@ -2804,27 +2678,25 @@ local function setupPlayerMonitoring()
     end
 end
 
--- Función para forzar hit en todos los survivors cercanos
-local function forceHitAllNearby()
+-- Función para forzar hit en jugadores cercanos
+local function forceHitNearbyPlayers()
     if not hitboxExpanderEnabled then return end
     
-    local char = LP.Character
-    if not char then return end
+    local myChar = LP.Character
+    if not myChar then return end
     
-    local rootPart = char:FindFirstChild("HumanoidRootPart")
-    if not rootPart then return end
+    local myRoot = myChar:FindFirstChild("HumanoidRootPart")
+    if not myRoot then return end
     
     local hitCount = 0
     
-    for player, hitbox in pairs(survivorHitboxes) do
-        if player and player.Parent and hitbox then
-            local survivorRoot = player:FindFirstChild("HumanoidRootPart")
-            if survivorRoot then
-                local distance = (rootPart.Position - survivorRoot.Position).Magnitude
-                
-                -- Si está dentro del rango de la hitbox expandida
-                if distance <= hitboxSize * 2 then
-                    applyDamageToSurvivor(player)
+    for _, player in ipairs(Players:GetPlayers()) do
+        if player ~= LP and player.Character then
+            local targetRoot = player.Character:FindFirstChild("HumanoidRootPart")
+            if targetRoot then
+                local distance = (myRoot.Position - targetRoot.Position).Magnitude
+                if distance <= hitboxSize * 1.5 then
+                    applyDamageToPlayer(player)
                     hitCount = hitCount + 1
                 end
             end
@@ -2832,91 +2704,114 @@ local function forceHitAllNearby()
     end
     
     if hitCount > 0 then
-        Rayfield:Notify({
-            Title = "Hitbox Expander",
-            Content = string.format("Golpeados %d survivors", hitCount),
-            Duration = 2
-        })
     end
 end
 
-KillerTab:CreateSection("Hitbox")
+-- Conexión principal para mantener el hitbox expander
+local hitboxLoopConnection = nil
 
-  KillerTab:CreateToggle({
-        Name = "Hitbox Expander",
-        CurrentValue = false,
-        Callback = function(v)
-            hitboxExpanderEnabled = v
-            
-            if v then
-                -- Encontrar arma del jugador
-                weaponModel = findPlayerWeapon()
-                
-                -- Crear hitboxes
-                createHitboxesForAllSurvivors()
-                setupPlayerMonitoring()
-                
-                Rayfield:Notify({
-                    Title = "Hitbox Expander",
-                    Content = "Activado - Hitboxes creadas",
-                    Duration = 3
-                })
-            else
-                cleanupAllHitboxes()
-                weaponModel = nil
-                
-                Rayfield:Notify({
-                    Title = "Hitbox Expander",
-                    Content = "Desactivado - Hitboxes removidas",
-                    Duration = 3
-                })
-            end
-        end
-    })
+local function startHitboxExpander()
+    if hitboxLoopConnection then
+        hitboxLoopConnection:Disconnect()
+    end
     
-    KillerTab:CreateSlider({
-        Name = "Hitbox Size",
-        Range = {5, 25},
-        Increment = 1,
-        Suffix = " studs",
-        CurrentValue = hitboxSize,
-        Callback = function(v)
-            hitboxSize = v
-            if hitboxExpanderEnabled then
-                updateHitboxSizes()
-            end
-        end
-    })
+    hitboxLoopConnection = RunService.RenderStepped:Connect(function()
+        applyHitboxExpander()
+    end)
     
-    KillerTab:CreateSlider({
-        Name = "Hitbox Transparency",
-        Range = {0.1, 0.9},
-        Increment = 0.1,
-        CurrentValue = hitboxTransparency,
-        Callback = function(v)
-            hitboxTransparency = v
-            if hitboxExpanderEnabled then
-                updateHitboxTransparency()
-            end
-        end
-    })
+    setupPlayerMonitoring()
+end
+
+local function stopHitboxExpander()
+    if hitboxLoopConnection then
+        hitboxLoopConnection:Disconnect()
+        hitboxLoopConnection = nil
+    end
     
-    KillerTab:CreateColorPicker({
-        Name = "Hitbox Color",
-        Color = hitboxColor,
-        Callback = function(v)
-            hitboxColor = v
-            if hitboxExpanderEnabled then
-                updateHitboxColor()
-            end
+    restoreOriginalHitboxes()
+    
+    for _, conn in ipairs(hitboxConnections) do
+        conn:Disconnect()
+    end
+    hitboxConnections = {}
+end
+
+KillerTab:CreateSection("Hitbox Expander")
+
+KillerTab:CreateToggle({
+    Name = "Hitbox Expander",
+    CurrentValue = false,
+    Flag = "HitboxExpanderToggle",
+    Callback = function(v)
+        hitboxExpanderEnabled = v
+        
+        if v then
+            startHitboxExpander()
+        else
+            stopHitboxExpander()
         end
-    })
+    end
+})
+
+KillerTab:CreateSlider({
+    Name = "Tamaño Hitbox",
+    Range = {5, 30},
+    Increment = 1,
+    Suffix = " studs",
+    CurrentValue = hitboxSize,
+    Flag = "HitboxSizeSlider",
+    Callback = function(v)
+        hitboxSize = math.floor(v)
+        
+        if hitboxExpanderEnabled then
+            Rayfield:Notify({
+                Title = "Hitbox Expander",
+                Content = string.format("Tamaño actualizado: %d", hitboxSize),
+                Duration = 2
+            })
+        end
+    end
+})
+
+KillerTab:CreateSlider({
+    Name = "Transparencia Hitbox",
+    Range = {0.1, 0.9},
+    Increment = 0.1,
+    CurrentValue = hitboxTransparency,
+    Flag = "HitboxTransparencySlider",
+    Callback = function(v)
+        hitboxTransparency = v
+        
+        if hitboxExpanderEnabled then
+            Rayfield:Notify({
+                Title = "Hitbox Expander",
+                Content = string.format("Transparencia: %.1f", hitboxTransparency),
+                Duration = 2
+            })
+        end
+    end
+})
+
+KillerTab:CreateColorPicker({
+    Name = "Color Hitbox",
+    Color = hitboxColor,
+    Flag = "HitboxColorPicker",
+    Callback = function(v)
+        hitboxColor = v
+        
+        if hitboxExpanderEnabled then
+            Rayfield:Notify({
+                Title = "Hitbox Expander",
+                Content = "Color actualizado",
+                Duration = 2
+            })
+        end
+    end
+})
 
 -- ============================================
 -- 21. SISTEMA FULL BREAK GENERATOR (KILLER TAB)
 -- ============================================
-
--- Sección Generator
 KillerTab:CreateSection("Generator")
 
 KillerTab:CreateToggle({

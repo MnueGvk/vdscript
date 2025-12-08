@@ -2675,7 +2675,7 @@ KillerTab:CreateToggle({
 local hitboxExpanderEnabled = false
 local hitboxSize = 15
 local hitboxTransparency = 0.6
-local hitboxColor = Color3.fromRGB(0, 255, 0)
+local hitboxColor = Color3.fromRGB(0, 255, 0)  -- Verde para survivors
 local originalSizes = {}
 local hitboxConnections = {}
 local damageRemote = nil
@@ -2684,7 +2684,6 @@ local damageRemote = nil
 local function getDamageRemote()
     if damageRemote then return damageRemote end
     
-    -- Buscar remotes de daño
     for _, obj in ipairs(game:GetDescendants()) do
         if obj:IsA("RemoteEvent") then
             local nameLower = obj.Name:lower()
@@ -2704,7 +2703,6 @@ local function applyDamageToPlayer(targetPlayer)
     
     local remote = getDamageRemote()
     if remote then
-        -- Intentar diferentes formatos
         local success = pcall(function()
             remote:FireServer(targetPlayer.Character, "Hit", 1)
         end)
@@ -2715,7 +2713,6 @@ local function applyDamageToPlayer(targetPlayer)
             end)
         end
     else
-        -- Fallback directo
         pcall(function()
             local humanoid = targetPlayer.Character:FindFirstChildOfClass("Humanoid")
             if humanoid then
@@ -2725,16 +2722,14 @@ local function applyDamageToPlayer(targetPlayer)
     end
 end
 
--- Función para aplicar/expandir hitboxes A TODOS LOS JUGADORES MENOS A NOSOTROS
+-- Función para aplicar hitboxes a todos los jugadores menos a nosotros
 local function applyHitboxExpander()
     if not hitboxExpanderEnabled then return end
     
     for _, player in ipairs(Players:GetPlayers()) do
-        -- Aplicar a todos menos a nosotros mismos
         if player ~= LP and player.Character then
             local head = player.Character:FindFirstChild("Head")
             if head then
-                -- Guardar tamaño original
                 if not originalSizes[head] then
                     originalSizes[head] = {
                         Size = head.Size,
@@ -2745,15 +2740,13 @@ local function applyHitboxExpander()
                     }
                 end
                 
-                -- Aplicar hitbox expandida VERDE
                 head.Size = Vector3.new(hitboxSize, hitboxSize, hitboxSize)
                 head.Transparency = hitboxTransparency
                 head.CanCollide = false
                 head.Massless = true
-                head.Color = hitboxColor  -- Color verde
+                head.Color = hitboxColor
                 head.Material = Enum.Material.Neon
                 
-                -- Si estamos cerca del jugador, aplicar daño automático
                 local myChar = LP.Character
                 if myChar then
                     local myRoot = myChar:FindFirstChild("HumanoidRootPart")
@@ -2788,20 +2781,17 @@ local function restoreOriginalHitboxes()
     originalSizes = {}
 end
 
--- Función para configurar monitoreo de jugadores
+-- Función para monitorear jugadores
 local function setupPlayerMonitoring()
-    -- Limpiar conexiones anteriores
     for _, conn in ipairs(hitboxConnections) do
         conn:Disconnect()
     end
     hitboxConnections = {}
     
-    -- Monitorear nuevos jugadores
     local playerAddedConn = Players.PlayerAdded:Connect(function(player)
         player.CharacterAdded:Connect(function(character)
             task.wait(0.5)
             if hitboxExpanderEnabled then
-                -- Limpiar tamaño original al cambiar de personaje
                 local head = character:FindFirstChild("Head")
                 if head and originalSizes[head] then
                     originalSizes[head] = nil
@@ -2811,13 +2801,11 @@ local function setupPlayerMonitoring()
     end)
     table.insert(hitboxConnections, playerAddedConn)
     
-    -- Monitorear jugadores existentes
     for _, player in ipairs(Players:GetPlayers()) do
         if player ~= LP then
             local charConn = player.CharacterAdded:Connect(function(character)
                 task.wait(0.5)
                 if hitboxExpanderEnabled then
-                    -- Limpiar tamaño original al cambiar de personaje
                     local head = character:FindFirstChild("Head")
                     if head and originalSizes[head] then
                         originalSizes[head] = nil
@@ -2829,37 +2817,7 @@ local function setupPlayerMonitoring()
     end
 end
 
--- Función para forzar hit en jugadores cercanos (a todos los demás jugadores)
-local function forceHitNearbyPlayers()
-    if not hitboxExpanderEnabled then return end
-    
-    local myChar = LP.Character
-    if not myChar then return end
-    
-    local myRoot = myChar:FindFirstChild("HumanoidRootPart")
-    if not myRoot then return end
-    
-    local hitCount = 0
-    
-    for _, player in ipairs(Players:GetPlayers()) do
-        if player ~= LP and player.Character then  -- Todos menos nosotros
-            local targetRoot = player.Character:FindFirstChild("HumanoidRootPart")
-            if targetRoot then
-                local distance = (myRoot.Position - targetRoot.Position).Magnitude
-                if distance <= hitboxSize * 1.5 then
-                    applyDamageToPlayer(player)
-                    hitCount = hitCount + 1
-                end
-            end
-        end
-    end
-    
-    if hitCount > 0 then
-        -- Opcional: Notificación de golpes conectados
-    end
-end
-
--- Conexión principal para mantener el hitbox expander
+-- Conexión principal
 local hitboxLoopConnection = nil
 
 local function startHitboxExpander()
@@ -2888,7 +2846,8 @@ local function stopHitboxExpander()
     hitboxConnections = {}
 end
 
-KillerTab:CreateSection("Hitbox Expander")
+-- INTERFAZ EN KILLERTAB
+KillerTab:CreateSection("Hitbox Expander (Survivors)")
 
 KillerTab:CreateToggle({
     Name = "Hitbox Expander",
@@ -2901,7 +2860,7 @@ KillerTab:CreateToggle({
             startHitboxExpander()
             Rayfield:Notify({
                 Title = "Hitbox Expander",
-                Content = "✅ Activado - Hitboxes verdes en todos los jugadores",
+                Content = "✅ Activado - Hitboxes verdes en survivors",
                 Duration = 3
             })
         else
@@ -2928,7 +2887,7 @@ KillerTab:CreateSlider({
         if hitboxExpanderEnabled then
             Rayfield:Notify({
                 Title = "Hitbox Expander",
-                Content = string.format("📏 Tamaño actualizado: %d studs", hitboxSize),
+                Content = string.format("📏 Tamaño: %d studs", hitboxSize),
                 Duration = 2
             })
         end

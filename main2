@@ -882,14 +882,19 @@ SurvivorTab:CreateSlider({
 -- ============================================
 
 local repairBoostEnabled = false
-local repairBoostLevel = 1  -- Nivel 1-6
+local repairBoostLevel = 1
 local repairBoostValues = {
-    [1] = 1.05,   -- Nivel 1: ×1.05
-    [2] = 1.10,   -- Nivel 2: ×1.10  
-    [3] = 1.20,   -- Nivel 3: ×1.20
-    [4] = 1.30,   -- Nivel 4: ×1.30
-    [5] = 1.40,   -- Nivel 5: ×1.40
-    [6] = 1.50    -- Nivel 6: ×1.50
+    [1] = 1.05,
+    [2] = 1.10,
+    [3] = 1.20,
+    [4] = 1.30,
+    [5] = 1.40,
+    [6] = 1.50,
+    [7] = 1.60,
+    [8] = 1.70,
+    [9] = 1.80,
+    [10] = 1.90,
+    [11] = 2.00
 }
 local repairBoostConnection = nil
 local originalRemoteFunctions = {}
@@ -898,7 +903,7 @@ local isRepairBoostActive = false
 local lastAppliedBoost = 0
 local repairMaintenanceConnection = nil
 local lastGeneratorUpdate = 0
-local GENERATOR_UPDATE_INTERVAL = 0.3
+local GENERATOR_UPDATE_INTERVAL = 0.8
 
 -- Función para aplicar atributos
 local function applyRepairBoostToCharacter()
@@ -1035,25 +1040,6 @@ local function increaseGeneratorProgress()
     end
 end
 
--- Función para reparación instantánea
-local function instantGeneratorRepair()
-    local repairedCount = 0
-    
-    for _, generator in ipairs(workspace:GetDescendants()) do
-        if generator:IsA("Model") and generator.Name:lower():find("generator") then
-            pcall(function()
-                generator:SetAttribute("Progress", 100)
-                generator:SetAttribute("progress", 100)
-                generator:SetAttribute("Completed", true)
-                generator:SetAttribute("Repaired", true)
-                
-                repairedCount = repairedCount + 1
-            end)
-        end
-    end
-    
-    return repairedCount
-end
 
 -- Función para limpiar
 local function cleanupBoostAttributes()
@@ -1125,7 +1111,7 @@ SurvivorTab:CreateToggle({
 
 SurvivorTab:CreateSlider({
     Name = "Nivel Generator Boost",
-    Range = {1, 6},
+    Range = {1, 12},
     Increment = 1,
     CurrentValue = repairBoostLevel,
     Flag = "GeneratorBoostLevel",
@@ -1138,14 +1124,6 @@ SurvivorTab:CreateSlider({
     end
 })
 
-SurvivorTab:CreateButton({
-    Name = "Reparación Instantánea",
-    Callback = function()
-        if repairBoostEnabled then
-            instantGeneratorRepair()
-        end
-    end
-})
 
 -- ============================================
 -- 14. SISTEMA PERFECT SKILLCHECK (SURVIVOR TAB)

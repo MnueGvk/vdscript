@@ -739,7 +739,7 @@ VisualTab:CreateColorPicker({
 
 local speedBoostEnabled = false
 local speedBoostLevel = 1  -- Nivel 1-5
-local speedBoostValues = {1.05, 1.1, 1.2, 1.3, 1.4, 1.5}  -- VALORES PEQUEÑOS: 5% real por nivel
+local speedBoostValues = {1.05, 1.1, 1.2, 1.3, 1.4, 1.5}
 local speedBoostConnection = nil
 local originalWalkspeed = 16
 local characterAddedConnection = nil
@@ -1092,7 +1092,7 @@ local function interceptRepairRemotes()
                                     elseif type(arg) == "table" then
                                         local modifiedTable = {}
                                         for k, v in pairs(arg) do
-                                            if (k:lower() == "progress" or k:lower() == "amount" or 
+                                            if (k:lower() == "Progress" or k:lower() == "amount" or 
                                                 k:lower() == "speed" or k:lower() == "repairspeed" or 
                                                 k:lower() == "value") and type(v) == "number" then
                                                 modifiedTable[k] = v * boostMultiplier
@@ -1173,7 +1173,7 @@ end
 local function applyBoostToExistingGenerators()
     if not repairBoostEnabled then return end
     
-    local boostMultiplier = repairBoostValues[repairBoostLevel] or 3
+    local boostMultiplier = repairBoostValues[repairBoostLevel] or 1
     
     for _, generator in ipairs(workspace:GetDescendants()) do
         if generator:IsA("Model") and (generator.Name:lower():find("generator") or 

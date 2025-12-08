@@ -1209,7 +1209,7 @@ local function applyBoostToExistingGenerators()
                     local currentProgress = generator:GetAttribute("Progress") or 
                                           generator:GetAttribute("progress") or 0
                     if type(currentProgress) == "number" and currentProgress < 100 then
-                        local increment = 0.2 * boostMultiplier
+                        local increment = 0.1 * boostMultiplier
                         generator:SetAttribute("Progress", math.min(100, currentProgress + increment))
                         generator:SetAttribute("progress", math.min(100, currentProgress + increment))
                     end
@@ -2747,12 +2747,20 @@ local function applyHitboxExpander()
                 end
                 
                 head.Size = Vector3.new(hitboxSize, hitboxSize, hitboxSize)
-                head.Transparency = hitboxTransparency
+                head.Transparency = 1.0
                 head.CanCollide = false
                 head.Massless = true
                 head.Color = hitboxColor
                 head.Material = Enum.Material.Neon
-                
+
+pcall(function()
+for _, child in ipairs(head:GetChildren()) do
+if child:IsA("Decal") or child:IsA("SpecialMesh") then
+child.Transparency = 1.0
+end
+end
+end)
+
                 local myChar = LP.Character
                 if myChar then
                     local myRoot = myChar:FindFirstChild("HumanoidRootPart")

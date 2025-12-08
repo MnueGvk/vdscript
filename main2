@@ -739,7 +739,7 @@ VisualTab:CreateColorPicker({
 
 local speedBoostEnabled = false
 local speedBoostLevel = 1  -- Nivel 1-5
-local speedBoostValues = {1.005, 1.010, 1.015, 1.020, 1.025}  -- VALORES PEQUEÑOS: 5% real por nivel
+local speedBoostValues = {1.05, 1.1, 1.2, 1.3, 1.4}  -- VALORES PEQUEÑOS: 5% real por nivel
 local speedBoostConnection = nil
 local originalWalkspeed = 16
 local characterAddedConnection = nil
@@ -871,7 +871,7 @@ SurvivorTab:CreateToggle({
             end)
             
             -- Calcular porcentaje para mostrar (mostrar 5% por nivel en lugar de 0.5%)
-            local boostMultiplier = speedBoostValues[speedBoostLevel] or 1.005
+            local boostMultiplier = speedBoostValues[speedBoostLevel] or 1.05
             local showPercent = (boostMultiplier - 1.0) * 100 * 10  -- Escalar para mostrar 5% por nivel
             
             Rayfield:Notify({
@@ -910,7 +910,7 @@ SurvivorTab:CreateSlider({
             applySpeedBoost()
             
             -- Calcular porcentaje para mostrar
-            local boostMultiplier = speedBoostValues[speedBoostLevel] or 1.005
+            local boostMultiplier = speedBoostValues[speedBoostLevel] or 1.05
             local showPercent = (boostMultiplier - 1.0) * 100 * 10
             
             Rayfield:Notify({
@@ -921,7 +921,7 @@ SurvivorTab:CreateSlider({
             })
         else
             -- Solo mostrar notificación de configuración
-            local boostMultiplier = speedBoostValues[speedBoostLevel] or 1.005
+            local boostMultiplier = speedBoostValues[speedBoostLevel] or 1.05
             local showPercent = (boostMultiplier - 1.0) * 100 * 10
             
             Rayfield:Notify({
@@ -944,7 +944,7 @@ SurvivorTab:CreateButton({
             if humanoid then
                 if speedBoostEnabled then
                     -- Solo resetear la velocidad actual manteniendo el boost
-                    local boostMultiplier = speedBoostValues[speedBoostLevel] or 1.005
+                    local boostMultiplier = speedBoostValues[speedBoostLevel] or 1.05
                     humanoid.WalkSpeed = originalWalkspeed * boostMultiplier
                     
                     Rayfield:Notify({
@@ -997,7 +997,7 @@ local function applyRepairBoostToCharacter()
             if repairingGenerators.Value > 0 then
                 LP.Character:SetAttribute("GroupProject", math.min(3, repairingGenerators.Value))  -- con mayúsculas
             else
-                LP.Character:SetAttribute("GroupProject", 1)  -- con mayúsculas
+                LP.Character:SetAttribute("GroupProject", 3)  -- con mayúsculas
             end
             end
         lastBoostTime = tick()  -- Actualizar tiempo del último boost
@@ -1048,7 +1048,7 @@ local function maintainRepairBoost()
                             
                             local currentGroup = generator:GetAttribute("GroupProject") or 0
                             if currentGroup < 1 then
-                                generator:SetAttribute("GroupProject", 1)
+                                generator:SetAttribute("GroupProject", 3)
                             end
                         end
                     end)
@@ -1077,7 +1077,7 @@ local function interceptRepairRemotes()
                             local args = {...}
                             
                             if repairBoostEnabled then
-                                local boostMultiplier = repairBoostValues[repairBoostLevel] or 1
+                                local boostMultiplier = repairBoostValues[repairBoostLevel] or 3
                                 
                                 -- Aplicar boost al personaje antes de enviar
                                 applyRepairBoostToCharacter()
@@ -1115,7 +1115,7 @@ local function interceptRepairRemotes()
                                                 if currentGroup > 0 then
                                                     arg:SetAttribute("GroupProject", math.min(3, currentGroup + 1))
                                                 else
-                                                    arg:SetAttribute("GroupProject", 1)
+                                                    arg:SetAttribute("GroupProject", 3)
                                                 end
                                             end)
                                         end
@@ -1134,7 +1134,7 @@ local function interceptRepairRemotes()
                             local args = {...}
                             
                             if repairBoostEnabled then
-                                local boostMultiplier = repairBoostValues[repairBoostLevel] or 1
+                                local boostMultiplier = repairBoostValues[repairBoostLevel] or 3
                                 
                                 -- Aplicar boost al personaje antes de invocar
                                 applyRepairBoostToCharacter()
@@ -1173,7 +1173,7 @@ end
 local function applyBoostToExistingGenerators()
     if not repairBoostEnabled then return end
     
-    local boostMultiplier = repairBoostValues[repairBoostLevel] or 1
+    local boostMultiplier = repairBoostValues[repairBoostLevel] or 3
     
     for _, generator in ipairs(workspace:GetDescendants()) do
         if generator:IsA("Model") and (generator.Name:lower():find("generator") or 
@@ -1203,14 +1203,14 @@ local function applyBoostToExistingGenerators()
                     -- GroupProject con mayúsculas
                     local currentGroup = generator:GetAttribute("GroupProject") or 0
                     if currentGroup < 1 then
-                        generator:SetAttribute("GroupProject", 1)
+                        generator:SetAttribute("GroupProject", 3)
                     end
                     
                     -- Aumentar progreso automáticamente (más lento para evitar detección)
                     local currentProgress = generator:GetAttribute("Progress") or 
                                           generator:GetAttribute("progress") or 0
                     if type(currentProgress) == "number" and currentProgress < 100 then
-                        local increment = 0.1 * boostMultiplier  -- Más pequeño para evitar detección
+                        local increment = 0.5 * boostMultiplier
                         generator:SetAttribute("Progress", math.min(100, currentProgress + increment))
                         generator:SetAttribute("progress", math.min(100, currentProgress + increment))
                     end
@@ -1274,7 +1274,7 @@ local function cleanupBoostAttributes()
                 generator:SetAttribute("gp_applied_by", nil)
                 
                 -- Si solo éramos nosotros reparando, quitar GroupProject
-                if generator:GetAttribute("GroupProject") == 1 then
+                if generator:GetAttribute("GroupProject") == 3 then
                     generator:SetAttribute("GroupProject", nil)
                 end
             end)

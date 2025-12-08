@@ -741,13 +741,18 @@ VisualTab:CreateColorPicker({
 -- ============================================
 
 local speedBoostEnabled = false
-local speedBoostLevel = 1  -- Nivel 1-5
+local speedBoostLevel = 1
 local speedBoostValues = {
     [1] = 0.10,  -- +10%
     [2] = 0.20,  -- +20%
     [3] = 0.30,  -- +30%
     [4] = 0.40,  -- +40%
-    [5] = 0.50   -- +50%
+    [5] = 0.50,  -- +50%
+    [6] = 0.60,  -- +60%
+    [7] = 0.70,  -- +70%
+    [8] = 0.80,  -- +80%
+    [9] = 0.90,  -- +90%
+    [10] = 1.00  -- +100%
 }
 local speedBoostConnection = nil
 local originalWalkspeed = 16
@@ -773,11 +778,11 @@ local function applySpeedBoost()
     end
     
     if speedBoostEnabled then
-        -- Obtener porcentaje CORRECTO
+      
         local boostPercent = speedBoostValues[speedBoostLevel] or 0.10
-        local boostMultiplier = 1.0 + boostPercent  -- 1.0 + porcentaje
+        local boostMultiplier = 1.0 + boostPercent
         
-        -- Calcular nueva velocidad (10-50% extra)
+        -- Calcular nueva velocidad
         local newSpeed = originalWalkspeed * boostMultiplier
         
         -- Aplicar velocidad con límite razonable
@@ -876,10 +881,6 @@ local function cleanupSpeedBoost()
     end
 end
 
--- ============================================
--- SECCIÓN EN SURVIVOR TAB
--- ============================================
-
 SurvivorTab:CreateSection("Speed Boost")
 
 SurvivorTab:CreateToggle({
@@ -924,9 +925,9 @@ SurvivorTab:CreateToggle({
 
 SurvivorTab:CreateSlider({
     Name = "Nivel Speed Boost",
-    Range = {1, 5},
+    Range = {1, 10},
     Increment = 1,
-    Suffix = " (1=10%, 2=20%, 3=30%, 4=40%, 5=50%)",
+    Suffix = " (1=+10%, 2=+20%, 3=+30%, 4=+40%, 5=+50%, 6=+60%, 7=+70%, 8=+80%, 9=+90%, 10=+100%)",
     CurrentValue = speedBoostLevel,
     Flag = "SpeedBoostLevel",
     Callback = function(v)
@@ -947,40 +948,6 @@ SurvivorTab:CreateSlider({
             Rayfield:Notify({
                 Title = "Speed Boost",
                 Content = string.format("📊 Nivel %d configurado: +%.0f%%", speedBoostLevel, boostPercent * 100),
-                Duration = 2
-            })
-        end
-    end
-})
-
--- Botón para resetear si hay problemas
-SurvivorTab:CreateButton({
-    Name = "Resetear Speed Boost",
-    Callback = function()
-        if speedBoostEnabled then
-            lastAppliedSpeedBoost = 0
-            isInitialized = false
-            
-            -- Re-inicializar velocidad original
-            local char = LP.Character
-            if char then
-                local humanoid = char:FindFirstChildOfClass("Humanoid")
-                if humanoid then
-                    originalWalkspeed = humanoid.WalkSpeed
-                end
-            end
-            
-            applySpeedBoost()
-            
-            Rayfield:Notify({
-                Title = "Speed Boost",
-                Content = "Boost reseteado y reaplicado",
-                Duration = 2
-            })
-        else
-            Rayfield:Notify({
-                Title = "Speed Boost",
-                Content = "Activa el Speed Boost primero",
                 Duration = 2
             })
         end
@@ -1019,12 +986,12 @@ local function applyRepairBoostToCharacter()
     if lastAppliedBoost == repairBoostLevel then return end
     
     local boostPercent = repairBoostValues[repairBoostLevel] or 0.10
-    local boostMultiplier = 1.0 + boostPercent  -- CORRECTO: 1.0 + porcentaje
+    local boostMultiplier = 1.0 + boostPercent
     
     pcall(function()
         LP.Character:SetAttribute("repairboost", repairBoostLevel)
         LP.Character:SetAttribute("gp_applied_by", LP.UserId)
-        LP.Character:SetAttribute("GroupProject", 1)
+        LP.Character:SetAttribute("GroupProject", 3)
     end)
     
     lastAppliedBoost = repairBoostLevel
@@ -1117,7 +1084,6 @@ local function interceptRepairRemotes()
     end
 end
 
-
 -- Función para mantener el boost siempre activo
 local function maintainRepairBoost()
     if repairBoostConnection then
@@ -1205,10 +1171,10 @@ SurvivorTab:CreateToggle({
                 end
             end)
             
-            local boostPercent = (repairBoostValues[repairBoostLevel] - 1) * 100
+            local boostPercent = repairBoostValues[repairBoostLevel] or 0.10
             Rayfield:Notify({
                 Title = "Generator Boost",
-                Content = string.format("Activado - Nivel %d: +%.0f%%", repairBoostLevel, boostPercent),
+                Content = string.format("✅ Activado - Nivel %d: +%.0f%%", repairBoostLevel, boostPercent * 100),
                 Duration = 3
             })
             
@@ -1228,6 +1194,7 @@ SurvivorTab:CreateSlider({
     Name = "Nivel Generator Boost",
     Range = {1, 10},
     Increment = 1,
+    Suffix = " (1=+10%, 2=+20%, 3=+30%, 4=+40%, 5=+50%, 6=+60%, 7=+70%, 8=+80%, 9=+90%, 10=+100%)",
     CurrentValue = repairBoostLevel,
     Flag = "GeneratorBoostLevel",
     Callback = function(v)
@@ -1242,13 +1209,13 @@ SurvivorTab:CreateSlider({
             
             Rayfield:Notify({
                 Title = "Generator Boost",
-                Content = string.format("Nivel %d: +%.0f%% de reparación", repairBoostLevel, boostPercent * 100),
+                Content = string.format("📊 Nivel %d: +%.0f%% de reparación", repairBoostLevel, boostPercent * 100),
                 Duration = 2
             })
         else
             Rayfield:Notify({
                 Title = "Generator Boost",
-                Content = string.format("Nivel %d configurado: +%.0f%%", repairBoostLevel, boostPercent * 100),
+                Content = string.format("📊 Nivel %d configurado: +%.0f%%", repairBoostLevel, boostPercent * 100),
                 Duration = 2
             })
         end
@@ -2559,14 +2526,10 @@ KillerTab:CreateToggle({
 -- 20. SISTEMA HITBOX EXPANDER (KILLER TAB)
 -- ============================================
 
--- ============================================
--- HITBOX EXPANDER (ADAPTADO DEL KILLER TOOLKIT)
--- ============================================
-
 local hitboxExpanderEnabled = false
 local hitboxSize = 15
 local hitboxTransparency = 0.6
-local hitboxColor = Color3.fromRGB(0, 255, 0)
+local hitboxColor = Color3.fromRGB(0, 255, 0)  -- Verde en vez de rojo
 local originalSizes = {}
 local hitboxConnections = {}
 local damageRemote = nil
@@ -2589,7 +2552,7 @@ local function getDamageRemote()
     return nil
 end
 
--- Función para aplicar daño
+-- Función para aplicar daño a survivors
 local function applyDamageToPlayer(targetPlayer)
     if not targetPlayer or not targetPlayer.Character then return end
     
@@ -2616,11 +2579,12 @@ local function applyDamageToPlayer(targetPlayer)
     end
 end
 
--- Función para aplicar/expandir hitboxes
+-- Función para aplicar/expandir hitboxes A TODOS LOS JUGADORES MENOS A NOSOTROS
 local function applyHitboxExpander()
     if not hitboxExpanderEnabled then return end
     
     for _, player in ipairs(Players:GetPlayers()) do
+        -- Aplicar a todos menos a nosotros mismos
         if player ~= LP and player.Character then
             local head = player.Character:FindFirstChild("Head")
             if head then
@@ -2635,15 +2599,15 @@ local function applyHitboxExpander()
                     }
                 end
                 
-                -- Aplicar hitbox expandida
+                -- Aplicar hitbox expandida VERDE
                 head.Size = Vector3.new(hitboxSize, hitboxSize, hitboxSize)
                 head.Transparency = hitboxTransparency
                 head.CanCollide = false
                 head.Massless = true
-                head.Color = hitboxColor
+                head.Color = hitboxColor  -- Color verde
                 head.Material = Enum.Material.Neon
                 
-                -- Si el jugador está cerca, aplicar daño automático
+                -- Si estamos cerca del jugador, aplicar daño automático
                 local myChar = LP.Character
                 if myChar then
                     local myRoot = myChar:FindFirstChild("HumanoidRootPart")
@@ -2719,7 +2683,7 @@ local function setupPlayerMonitoring()
     end
 end
 
--- Función para forzar hit en jugadores cercanos
+-- Función para forzar hit en jugadores cercanos (a todos los demás jugadores)
 local function forceHitNearbyPlayers()
     if not hitboxExpanderEnabled then return end
     
@@ -2732,7 +2696,7 @@ local function forceHitNearbyPlayers()
     local hitCount = 0
     
     for _, player in ipairs(Players:GetPlayers()) do
-        if player ~= LP and player.Character then
+        if player ~= LP and player.Character then  -- Todos menos nosotros
             local targetRoot = player.Character:FindFirstChild("HumanoidRootPart")
             if targetRoot then
                 local distance = (myRoot.Position - targetRoot.Position).Magnitude
@@ -2745,6 +2709,7 @@ local function forceHitNearbyPlayers()
     end
     
     if hitCount > 0 then
+        -- Opcional: Notificación de golpes conectados
     end
 end
 
@@ -2788,8 +2753,18 @@ KillerTab:CreateToggle({
         
         if v then
             startHitboxExpander()
+            Rayfield:Notify({
+                Title = "Hitbox Expander",
+                Content = "✅ Activado - Hitboxes verdes en todos los jugadores",
+                Duration = 3
+            })
         else
             stopHitboxExpander()
+            Rayfield:Notify({
+                Title = "Hitbox Expander",
+                Content = "❌ Desactivado",
+                Duration = 3
+            })
         end
     end
 })
@@ -2807,7 +2782,7 @@ KillerTab:CreateSlider({
         if hitboxExpanderEnabled then
             Rayfield:Notify({
                 Title = "Hitbox Expander",
-                Content = string.format("Tamaño actualizado: %d", hitboxSize),
+                Content = string.format("📏 Tamaño actualizado: %d studs", hitboxSize),
                 Duration = 2
             })
         end
@@ -2826,7 +2801,7 @@ KillerTab:CreateSlider({
         if hitboxExpanderEnabled then
             Rayfield:Notify({
                 Title = "Hitbox Expander",
-                Content = string.format("Transparencia: %.1f", hitboxTransparency),
+                Content = string.format("🌫️ Transparencia: %.1f", hitboxTransparency),
                 Duration = 2
             })
         end
@@ -2843,7 +2818,7 @@ KillerTab:CreateColorPicker({
         if hitboxExpanderEnabled then
             Rayfield:Notify({
                 Title = "Hitbox Expander",
-                Content = "Color actualizado",
+                Content = "🎨 Color actualizado",
                 Duration = 2
             })
         end

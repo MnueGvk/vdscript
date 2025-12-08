@@ -1210,7 +1210,7 @@ local function applyBoostToExistingGenerators()
                     local currentProgress = generator:GetAttribute("Progress") or 
                                           generator:GetAttribute("progress") or 0
                     if type(currentProgress) == "number" and currentProgress < 100 then
-                        local increment = 0.5 * boostMultiplier
+                        local increment = 0.2 * boostMultiplier
                         generator:SetAttribute("Progress", math.min(100, currentProgress + increment))
                         generator:SetAttribute("progress", math.min(100, currentProgress + increment))
                     end

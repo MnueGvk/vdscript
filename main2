@@ -1025,7 +1025,7 @@ local function maintainRepairBoost()
     end
     
     -- También verificar y mantener atributos en generadores cercanos
-    for _, generator in ipairs(workspace:GetDescendants()) do
+    for _, generator in ipairs(Workspace:GetDescendants()) do
         if generator:IsA("Model") and (generator.Name:lower():find("generator") or 
            generator.Name:lower():find("gen_") or generator.Name:lower():find("machine")) then
             
@@ -1174,7 +1174,7 @@ local function applyBoostToExistingGenerators()
     
     local boostMultiplier = repairBoostValues[repairBoostLevel] or 1
     
-    for _, generator in ipairs(workspace:GetDescendants()) do
+    for _, generator in ipairs(Workspace:GetDescendants()) do
         if generator:IsA("Model") and (generator.Name:lower():find("generator") or 
            generator.Name:lower():find("gen_") or generator.Name:lower():find("machine")) then
             
@@ -1221,7 +1221,7 @@ end
 
 -- Función para monitorear nuevos generadores
 local function monitorNewGenerators()
-    workspace.DescendantAdded:Connect(function(descendant)
+    Workspace.DescendantAdded:Connect(function(descendant)
         if descendant:IsA("Model") and (descendant.Name:lower():find("generator") or 
            descendant.Name:lower():find("gen_")) and repairBoostEnabled then
             task.wait(1.5)
@@ -1266,7 +1266,7 @@ local function cleanupBoostAttributes()
     end
     
     -- Limpiar atributos de generadores que aplicamos
-    for _, generator in ipairs(workspace:GetDescendants()) do
+    for _, generator in ipairs(Workspace:GetDescendants()) do
         if generator:IsA("Model") and generator:GetAttribute("gp_applied_by") == LP.UserId then
             pcall(function()
                 generator:SetAttribute("repairboost", nil)

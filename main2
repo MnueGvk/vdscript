@@ -738,19 +738,18 @@ VisualTab:CreateColorPicker({
 -- ============================================
 
 local speedBoostEnabled = false
-local speedBoostLevel = 1  -- Nivel 1-5
+local speedBoostLevel = 1  -- Nivel 1-6
 local speedBoostValues = {1.05, 1.1, 1.2, 1.3, 1.4, 1.5}
 local speedBoostConnection = nil
 local originalWalkspeed = 16
 local characterAddedConnection = nil
 
--- Función para aplicar el speed boost permanentemente
+-- Función para aplicar el speed boost
 local function applySpeedBoost()
     local char = LP.Character
     if char then
         local humanoid = char:FindFirstChildOfClass("Humanoid")
         if humanoid then
-            -- Guardar velocidad original solo la primera vez
             if originalWalkspeed == 16 then
                 originalWalkspeed = humanoid.WalkSpeed
             end
@@ -759,23 +758,16 @@ local function applySpeedBoost()
                 local boostMultiplier = speedBoostValues[speedBoostLevel] or 1.05
                 local newSpeed = originalWalkspeed * boostMultiplier
                 
-                -- Aplicar velocidad boosteada
                 humanoid.WalkSpeed = newSpeed
                 
-                -- Aplicar atributos de boost CON VALORES PEQUEÑOS
                 pcall(function()
-                    -- Enviar valor pequeño, no el nivel
-                    char:SetAttribute("speedboost", boostMultiplier)  -- Valor pequeño
+                    char:SetAttribute("speedboost", boostMultiplier)
                     char:SetAttribute("gp_applied_by", LP.UserId)
-                    
-                    -- Atributo IsRunning para indicar que tiene speed boost activo
                     char:SetAttribute("IsRunning", true)
                 end)
             else
-                -- Restaurar velocidad original
                 humanoid.WalkSpeed = originalWalkspeed
                 
-                -- Limpiar atributos de boost
                 pcall(function()
                     char:SetAttribute("speedboost", nil)
                     char:SetAttribute("gp_applied_by", nil)
@@ -786,7 +778,7 @@ local function applySpeedBoost()
     end
 end
 
--- Función para mantener el boost activo constantemente
+-- Función para mantener el boost activo
 local function maintainSpeedBoost()
     if speedBoostConnection then
         speedBoostConnection:Disconnect()
@@ -797,11 +789,10 @@ local function maintainSpeedBoost()
         applySpeedBoost()
     end)
     
-    -- Aplicar inmediatamente
     applySpeedBoost()
 end
 
--- Función para limpiar todo al desactivar
+-- Función para limpiar
 local function cleanupSpeedBoost()
     if speedBoostConnection then
         speedBoostConnection:Disconnect()
@@ -813,7 +804,6 @@ local function cleanupSpeedBoost()
         characterAddedConnection = nil
     end
     
-    -- Restaurar velocidad y limpiar atributos
     local char = LP.Character
     if char then
         local humanoid = char:FindFirstChildOfClass("Humanoid")
@@ -840,10 +830,8 @@ SurvivorTab:CreateToggle({
         speedBoostEnabled = v
         
         if v then
-            -- Limpiar primero cualquier estado anterior
             cleanupSpeedBoost()
             
-            -- Guardar velocidad original del personaje actual
             local char = LP.Character
             if char then
                 local humanoid = char:FindFirstChildOfClass("Humanoid")
@@ -852,12 +840,10 @@ SurvivorTab:CreateToggle({
                 end
             end
             
-            -- Iniciar sistema de boost permanente
             maintainSpeedBoost()
             
-            -- Configurar reconexión cuando cambie el personaje
             characterAddedConnection = LP.CharacterAdded:Connect(function()
-                task.wait(0.5)  -- Esperar a que cargue el personaje
+                task.wait(0.5)
                 if speedBoostEnabled then
                     local char = LP.Character
                     if char then
@@ -870,79 +856,23 @@ SurvivorTab:CreateToggle({
                 end
             end)
             
-            local boostMultiplier = speedBoostValues[speedBoostLevel] or 1.05
-            local showPercent = (boostMultiplier - 1.0) * 100 * 10
-            
-            Rayfield:Notify({
-                Title = "Speed Boost",
-                Content = string.format("✅ Activado (Nivel %d: +%.0f%%)", 
-                    speedBoostLevel, showPercent),
-                Duration = 3
-            })
-            
         else
-            -- Desactivar completamente
             cleanupSpeedBoost()
-            
-            Rayfield:Notify({
-                Title = "Speed Boost",
-                Content = "❌ Desactivado",
-                Duration = 3
-            })
         end
     end
 })
 
--- Slider para niveles del speed boost
 SurvivorTab:CreateSlider({
     Name = "Nivel Speed Boost",
     Range = {1, 6},
     Increment = 1,
-    Suffix = " (+10% por nivel)",
     CurrentValue = speedBoostLevel,
     Flag = "SpeedBoostLevel",
     Callback = function(v)
         speedBoostLevel = math.floor(v)
         
-        -- Actualizar si está activo
         if speedBoostEnabled then
             applySpeedBoost()
-            
-            -- Calcular porcentaje para mostrar
-            local boostMultiplier = speedBoostValues[speedBoostLevel] or 1.05
-            local showPercent = (boostMultiplier - 1.0) * 100 * 10
-        end
-    end
-})
-
--- Botón para resetear velocidad (por si hay problemas)
-SurvivorTab:CreateButton({
-    Name = "Resetear Velocidad",
-    Callback = function()
-        local char = LP.Character
-        if char then
-            local humanoid = char:FindFirstChildOfClass("Humanoid")
-            if humanoid then
-                if speedBoostEnabled then
-                    -- Solo resetear la velocidad actual manteniendo el boost
-                    local boostMultiplier = speedBoostValues[speedBoostLevel] or 1.05
-                    humanoid.WalkSpeed = originalWalkspeed * boostMultiplier
-                    
-                    Rayfield:Notify({
-                        Title = "Speed Boost",
-                        Content = "✅ Velocidad reseteada (boost mantenido)",
-                        Duration = 2
-                    })
-                else
-                    humanoid.WalkSpeed = originalWalkspeed
-                    
-                    Rayfield:Notify({
-                        Title = "Speed Boost",
-                        Content = "✅ Velocidad restaurada a normal",
-                        Duration = 2
-                    })
-                end
-            end
         end
     end
 })
@@ -1197,7 +1127,6 @@ SurvivorTab:CreateSlider({
     Name = "Nivel Generator Boost",
     Range = {1, 6},
     Increment = 1,
-    Suffix = " (1=×1.05, 2=×1.10, 3=×1.20, 4=×1.30, 5=×1.40, 6=×1.50)",
     CurrentValue = repairBoostLevel,
     Flag = "GeneratorBoostLevel",
     Callback = function(v)

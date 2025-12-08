@@ -951,10 +951,6 @@ SurvivorTab:CreateButton({
 -- 13. SISTEMA GENERATOR BOOST (SURVIVOR TAB)
 -- ============================================
 
--- ============================================
--- 13. GENERATOR BOOST OPTIMIZADO (SIN LAG)
--- ============================================
-
 local repairBoostEnabled = false
 local repairBoostLevel = 1  -- Nivel 1-6
 local repairBoostValues = {
@@ -1322,85 +1318,7 @@ SurvivorTab:CreateSlider({
         
         if repairBoostEnabled then
             lastAppliedBoost = 0  -- Forzar reaplicación
-            
-            Rayfield:Notify({
-                Title = "Generator Boost",
-                Content = string.format("📊 Nivel %d: ×%.2f (+%.0f%%)", 
-                    repairBoostLevel, boostMultiplier, boostPercent),
-                Duration = 2
-            })
-        else
-            Rayfield:Notify({
-                Title = "Generator Boost",
-                Content = string.format("📊 Nivel %d configurado: ×%.2f (+%.0f%%)", 
-                    repairBoostLevel, boostMultiplier, boostPercent),
-                Duration = 2
-            })
         end
-    end
-})
-
--- Botón para reparación INSTANTÁNEA MEJORADA
-SurvivorTab:CreateButton({
-    Name = "🚀 Reparación INSTANTÁNEA",
-    Callback = function()
-        if repairBoostEnabled then
-            local repairedCount = instantGeneratorRepair()
-            
-            if repairedCount > 0 then
-                Rayfield:Notify({
-                    Title = "Generator Boost",
-                    Content = string.format("🚀¡REPARACIÓN INSTANTÁNEA! %d generadores al 100%%", repairedCount),
-                    Duration = 4
-                })
-            else
-                Rayfield:Notify({
-                    Title = "Generator Boost",
-                    Content = "⚠️ No se encontraron generadores para reparar",
-                    Duration = 3
-                })
-            end
-        else
-            Rayfield:Notify({
-                Title = "Generator Boost",
-                Content = "⚠️ Activa el Generator Boost primero",
-                Duration = 3
-            })
-        end
-    end
-})
-
--- Botón para prueba de remotes
-SurvivorTab:CreateButton({
-    Name = "🔍 Probar Remotes de Generadores",
-    Callback = function()
-        local remoteCount = 0
-        local generatorCount = 0
-        
-        for _, obj in ipairs(game:GetDescendants()) do
-            if obj:IsA("RemoteEvent") then
-                local nameLower = obj.Name:lower()
-                if nameLower:find("generator") or nameLower:find("repair") then
-                    remoteCount = remoteCount + 1
-                    print("[Remote Found]", obj:GetFullName())
-                end
-            end
-        end
-        
-        for _, obj in ipairs(workspace:GetDescendants()) do
-            if obj:IsA("Model") and obj.Name:lower():find("generator") then
-                generatorCount = generatorCount + 1
-            end
-        end
-        
-        Rayfield:Notify({
-            Title = "Debug Info",
-            Content = string.format("Remotes: %d | Generadores: %d", remoteCount, generatorCount),
-            Duration = 5
-        })
-        
-        print(string.format("[Debug] Remotes encontrados: %d", remoteCount))
-        print(string.format("[Debug] Generadores encontrados: %d", generatorCount))
     end
 })
 

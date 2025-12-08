@@ -969,13 +969,9 @@ SurvivorTab:CreateButton({
 -- 13. SISTEMA GENERATOR BOOST (SURVIVOR TAB)
 -- ============================================
 
--- ============================================
--- 13. SISTEMA GENERATOR BOOST (SURVIVOR TAB) - CORREGIDO
--- ============================================
-
 local repairBoostEnabled = false
 local repairBoostLevel = 1
-local repairBoostValues = {1, 1.1, 1.2, 1.3, 1.4, 1.5}
+local repairBoostValues = {1, 1.1, 1.2, 1.3, 1.4,}
 local repairBoostConnection = nil
 local repairMaintenanceConnection = nil
 local originalRemoteFunctions = {}
@@ -1230,7 +1226,7 @@ local function monitorNewGenerators()
     Workspace.DescendantAdded:Connect(function(descendant)  -- CAMBIÉ: workspace → Workspace
         if descendant:IsA("Model") and (descendant.Name:lower():find("generator") or 
            descendant.Name:lower():find("gen_")) and repairBoostEnabled then
-            task.wait(1.5)
+            task.wait(1)
             applyBoostToExistingGenerators()
         end
     end)
@@ -1353,7 +1349,7 @@ SurvivorTab:CreateToggle({
 -- Slider para niveles del repair boost
 SurvivorTab:CreateSlider({
     Name = "Nivel Repair Boost",
-    Range = {1, 6},
+    Range = {1, 5},
     Increment = 1,
     Suffix = " (+10% por nivel)",
     CurrentValue = repairBoostLevel,

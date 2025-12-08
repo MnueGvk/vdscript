@@ -1092,7 +1092,7 @@ local function interceptRepairRemotes()
                                     elseif type(arg) == "table" then
                                         local modifiedTable = {}
                                         for k, v in pairs(arg) do
-                                            if (k:lower() == "Progress" or k:lower() == "amount" or 
+                                            if (k:lower() == "progress" or k:lower() == "amount" or 
                                                 k:lower() == "speed" or k:lower() == "repairspeed" or 
                                                 k:lower() == "value") and type(v) == "number" then
                                                 modifiedTable[k] = v * boostMultiplier
@@ -1210,7 +1210,7 @@ local function applyBoostToExistingGenerators()
                     local currentProgress = generator:GetAttribute("Progress") or 
                                           generator:GetAttribute("progress") or 0
                     if type(currentProgress) == "number" and currentProgress < 100 then
-                        local increment = 0.2 * boostMultiplier
+                        local increment = 0.1 * boostMultiplier  -- Más pequeño para evitar detección
                         generator:SetAttribute("Progress", math.min(100, currentProgress + increment))
                         generator:SetAttribute("progress", math.min(100, currentProgress + increment))
                     end
@@ -1348,7 +1348,7 @@ SurvivorTab:CreateToggle({
 -- Slider para niveles del repair boost
 SurvivorTab:CreateSlider({
     Name = "Nivel Repair Boost",
-    Range = {1, 6},
+    Range = {1, 5},
     Increment = 1,
     Suffix = " (+10% por nivel)",
     CurrentValue = repairBoostLevel,
@@ -1368,7 +1368,6 @@ SurvivorTab:CreateSlider({
         end
     end
 })
-
 
 -- ============================================
 -- 14. SISTEMA PERFECT SKILLCHECK (SURVIVOR TAB)

@@ -948,7 +948,7 @@ SurvivorTab:CreateButton({
 })
 
 -- ============================================
--- 13. SISTEMA GENERATOR BOOST (SURVIVOR TAB)
+-- 13. SISTEMA PARA GENERATOR BOOST (SURVIVOR TAB)
 -- ============================================
 
 local repairBoostEnabled = false
@@ -968,14 +968,11 @@ local isRepairBoostActive = false
 local lastAppliedBoost = 0
 local repairMaintenanceConnection = nil
 local lastGeneratorUpdate = 0
-local GENERATOR_UPDATE_INTERVAL = 0.3  -- Actualizar cada 0.3 segundos (sin lag)
+local GENERATOR_UPDATE_INTERVAL = 0.3
 
--- Función para aplicar atributos CORREGIDA
+-- Función para aplicar atributos
 local function applyRepairBoostToCharacter()
     if not repairBoostEnabled or not LP.Character then return end
-    
-    -- Solo aplicar si el nivel cambió
-    if lastAppliedBoost == repairBoostLevel then return end
     
     local boostMultiplier = repairBoostValues[repairBoostLevel] or 1.05
     
@@ -987,97 +984,58 @@ local function applyRepairBoostToCharacter()
     
     lastAppliedBoost = repairBoostLevel
     isRepairBoostActive = true
-    
-    local boostPercent = (boostMultiplier - 1.0) * 100
-    print(string.format("[Generator Boost] Nivel %d: ×%.2f (+%.0f%%)", 
-        repairBoostLevel, boostMultiplier, boostPercent))
 end
 
--- Función para interceptar remotes CORREGIDA (solo una vez)
+-- Función para interceptar remotes
 local function interceptRepairRemotes()
-    -- Limpiar interceptaciones anteriores
     for obj, originalFunc in pairs(originalRemoteFunctions) do
-        if obj:IsA("RemoteEvent") then
-            obj.FireServer = originalFunc
-        elseif obj:IsA("RemoteFunction") then
-            obj.InvokeServer = originalFunc
+        if obj and obj.Parent then
+            if obj:IsA("RemoteEvent") and originalFunc then
+                pcall(function() 
+                    obj.OnClientEvent = originalFunc 
+                end)
+            end
         end
     end
     originalRemoteFunctions = {}
     interceptedRemotes = {}
     
-    -- Buscar remotes de reparación UNA SOLA VEZ
-    for _, obj in ipairs(game:GetDescendants()) do
-        if (obj:IsA("RemoteEvent") or obj:IsA("RemoteFunction")) and not interceptedRemotes[obj] then
-            local nameLower = obj.Name:lower()
-            if nameLower:find("repair") or nameLower:find("generator") or 
-               nameLower:find("progress") or nameLower:find("fix") then
-                
-                interceptedRemotes[obj] = true
-                
-                if obj:IsA("RemoteEvent") then
-                    local originalFire = obj.FireServer
-                    originalRemoteFunctions[obj] = originalFire
+    -- Buscar "Generator.RepairEvent"
+    local repairEvent = ReplicatedStorage:FindFirstChild("Remotes")
+    if repairEvent then
+        repairEvent = repairEvent:FindFirstChild("Generator")
+        if repairEvent then
+            repairEvent = repairEvent:FindFirstChild("RepairEvent")
+        end
+    end
+    
+    if repairEvent and repairEvent:IsA("RemoteEvent") then
+        if not interceptedRemotes[repairEvent] then
+            interceptedRemotes[repairEvent] = true
+            local originalHandler = repairEvent.OnClientEvent
+            
+            originalRemoteFunctions[repairEvent] = originalHandler
+            
+            repairEvent.OnClientEvent = function(...)
+                if repairBoostEnabled then
+                    local args = {...}
+                    local boostMultiplier = repairBoostValues[repairBoostLevel] or 1.05
                     
-                    obj.FireServer = function(self, ...)
-                        local args = {...}
+                    if #args >= 2 then
+                        local generator = args[1]
+                        local progress = args[2]
                         
-                        if repairBoostEnabled then
-                            local boostMultiplier = repairBoostValues[repairBoostLevel] or 1.05
-                            local modifiedArgs = {}
-                            
-                            for i, arg in ipairs(args) do
-                                if type(arg) == "number" then
-                                    -- Multiplicar por el boost
-                                    modifiedArgs[i] = arg * boostMultiplier
-                                elseif type(arg) == "table" then
-                                    local modifiedTable = {}
-                                    for k, v in pairs(arg) do
-                                        if type(v) == "number" and 
-                                           (k:lower():find("progress") or k:lower():find("amount")) then
-                                            modifiedTable[k] = v * boostMultiplier
-                                        else
-                                            modifiedTable[k] = v
-                                        end
-                                    end
-                                    modifiedArgs[i] = modifiedTable
-                                else
-                                    modifiedArgs[i] = arg
-                                end
-                            end
-                            
-                            return originalFire(self, unpack(modifiedArgs))
+                        if type(progress) == "number" then
+                            args[2] = progress * boostMultiplier
                         end
-                        
-                        return originalFire(self, ...)
                     end
                     
-                elseif obj:IsA("RemoteFunction") then
-                    local originalInvoke = obj.InvokeServer
-                    originalRemoteFunctions[obj] = originalInvoke
-                    
-                    obj.InvokeServer = function(self, ...)
-                        if repairBoostEnabled then
-                            local boostMultiplier = repairBoostValues[repairBoostLevel] or 1.05
-                            local result = originalInvoke(self, ...)
-                            
-                            if type(result) == "number" then
-                                return result * boostMultiplier
-                            elseif type(result) == "table" then
-                                local modifiedResult = {}
-                                for k, v in pairs(result) do
-                                    if type(v) == "number" and 
-                                       (k:lower():find("progress") or k:lower():find("amount")) then
-                                        modifiedResult[k] = v * boostMultiplier
-                                    else
-                                        modifiedResult[k] = v
-                                    end
-                                end
-                                return modifiedResult
-                            end
-                        end
-                        
-                        return originalInvoke(self, ...)
+                    if originalHandler then
+                        return originalHandler(unpack(args))
+                    end
+                else
+                    if originalHandler then
+                        return originalHandler(...)
                     end
                 end
             end
@@ -1085,8 +1043,8 @@ local function interceptRepairRemotes()
     end
 end
 
--- Función OPTIMIZADA para aplicar boost a generadores (sin lag)
-local function applyBoostToGenerators()
+-- Función para aumentar el progreso directamente
+local function increaseGeneratorProgress()
     if not repairBoostEnabled then return end
     
     local currentTime = tick()
@@ -1097,40 +1055,48 @@ local function applyBoostToGenerators()
     local char = LP.Character
     if not char then return end
     
-    local rootPart = char:FindFirstChild("HumanoidRootPart")
-    if not rootPart then return end
-    
-    -- Buscar solo generadores cerca del jugador (optimizado)
     for _, generator in ipairs(workspace:GetDescendants()) do
         if generator:IsA("Model") and generator.Name:lower():find("generator") then
             
-            local generatorRoot = generator:FindFirstChild("HumanoidRootPart") or 
-                                 generator.PrimaryPart
-            if not generatorRoot then continue end
-            
-            local distance = (rootPart.Position - generatorRoot.Position).Magnitude
-            if distance > 20 then continue end
-            
             pcall(function()
-                -- Solo actualizar si estamos interactuando
-                local isRepairing = generator:GetAttribute("BeingRepaired") or
-                                   generator:GetAttribute("IsBeingRepaired") or false
+                local beingRepaired = false
+                local repairers = generator:GetAttribute("Repairers") or {}
                 
-                if isRepairing then
-                    -- Aumentar progreso
+                if type(repairers) == "table" then
+                    for _, playerId in pairs(repairers) do
+                        if playerId == LP.UserId then
+                            beingRepaired = true
+                            break
+                        end
+                    end
+                end
+                
+                if not beingRepaired then
+                    beingRepaired = generator:GetAttribute("BeingRepairedBy") == LP.UserId
+                end
+                
+                if beingRepaired then
                     local currentProgress = generator:GetAttribute("Progress") or 
                                           generator:GetAttribute("progress") or 0
                     
                     if type(currentProgress) == "number" and currentProgress < 100 then
-                        local increment = 5.0 * boostMultiplier  -- Incremento decente
+                        local increment = 3.0 * boostMultiplier
                         local newProgress = math.min(100, currentProgress + increment)
                         
                         generator:SetAttribute("Progress", newProgress)
                         generator:SetAttribute("progress", newProgress)
                         
-                        -- Si llega al 100%, enviar evento de completado
-                        if newProgress >= 100 then
-                            sendGeneratorCompleteEvent(generator)
+                        local repairEvent = ReplicatedStorage:FindFirstChild("Remotes")
+                        if repairEvent then
+                            repairEvent = repairEvent:FindFirstChild("Generator")
+                            if repairEvent then
+                                repairEvent = repairEvent:FindFirstChild("RepairEvent")
+                                if repairEvent and repairEvent:IsA("RemoteEvent") then
+                                    pcall(function()
+                                        repairEvent:FireServer(generator, newProgress)
+                                    end)
+                                end
+                            end
                         end
                     end
                 end
@@ -1139,67 +1105,19 @@ local function applyBoostToGenerators()
     end
 end
 
--- Función para enviar evento de generador completado
-local function sendGeneratorCompleteEvent(generator)
-    if not generator then return end
-    
-    -- Buscar y enviar a todos los remotes de completado
-    for _, obj in ipairs(game:GetDescendants()) do
-        if obj:IsA("RemoteEvent") then
-            local nameLower = obj.Name:lower()
-            if nameLower:find("complete") or nameLower:find("finish") or 
-               nameLower:find("repaired") then
-                pcall(function()
-                    obj:FireServer(generator, "Complete", 100)
-                    obj:FireServer(generator, "Repaired", true)
-                end)
-            end
-        end
-    end
-    
-    -- Marcar como completado
-    pcall(function()
-        generator:SetAttribute("Completed", true)
-        generator:SetAttribute("Repaired", true)
-        generator:SetAttribute("Active", false)
-    end)
-end
-
--- Función para reparación INSTANTÁNEA REAL
+-- Función para reparación instantánea
 local function instantGeneratorRepair()
-    if not repairBoostEnabled then return end
-    
     local repairedCount = 0
     
     for _, generator in ipairs(workspace:GetDescendants()) do
         if generator:IsA("Model") and generator.Name:lower():find("generator") then
             pcall(function()
-                -- Establecer atributos de completado
                 generator:SetAttribute("Progress", 100)
                 generator:SetAttribute("progress", 100)
                 generator:SetAttribute("Completed", true)
                 generator:SetAttribute("Repaired", true)
-                generator:SetAttribute("Active", false)
-                
-                -- Enviar eventos de completado
-                sendGeneratorCompleteEvent(generator)
-                
-                -- Efectos visuales (opcional)
-                generator:SetAttribute("Sparkles", true)
                 
                 repairedCount = repairedCount + 1
-            end)
-        end
-    end
-    
-    -- También intentar con el método directo de remotes
-    for _, obj in ipairs(game:GetDescendants()) do
-        if obj:IsA("RemoteEvent") and obj.Name:lower():find("generator") then
-            pcall(function()
-                -- Intentar diferentes formatos
-                obj:FireServer("AllGeneratorsComplete")
-                obj:FireServer("CompleteAllGenerators")
-                obj:FireServer("InstantRepair")
             end)
         end
     end
@@ -1207,29 +1125,18 @@ local function instantGeneratorRepair()
     return repairedCount
 end
 
--- Función para limpiar atributos
+-- Función para limpiar
 local function cleanupBoostAttributes()
-    -- Detener conexión de mantenimiento
     if repairMaintenanceConnection then
         repairMaintenanceConnection:Disconnect()
         repairMaintenanceConnection = nil
     end
     
-    -- Limpiar atributos del personaje
-    if LP.Character then
-        pcall(function()
-            LP.Character:SetAttribute("repairboost", nil)
-            LP.Character:SetAttribute("gp_applied_by", nil)
-            LP.Character:SetAttribute("GroupProject", nil)
-        end)
-    end
-    
-    -- Restaurar remotes interceptados
     for obj, originalFunc in pairs(originalRemoteFunctions) do
-        if obj:IsA("RemoteEvent") then
-            obj.FireServer = originalFunc
-        elseif obj:IsA("RemoteFunction") then
-            obj.InvokeServer = originalFunc
+        if obj and obj.Parent and originalFunc then
+            pcall(function()
+                obj.OnClientEvent = originalFunc
+            end)
         end
     end
     originalRemoteFunctions = {}
@@ -1240,21 +1147,21 @@ local function cleanupBoostAttributes()
     lastGeneratorUpdate = 0
 end
 
--- Iniciar mantenimiento OPTIMIZADO (sin lag)
+-- Iniciar sistema
 local function startRepairBoostMaintenance()
     if repairMaintenanceConnection then
         repairMaintenanceConnection:Disconnect()
     end
     
     repairMaintenanceConnection = RunService.Heartbeat:Connect(function()
-        -- Solo actualizar cada cierto tiempo para evitar lag
+        applyRepairBoostToCharacter()
+        
         local currentTime = tick()
         if currentTime - lastGeneratorUpdate >= GENERATOR_UPDATE_INTERVAL then
-            applyBoostToGenerators()
+            increaseGeneratorProgress()
         end
     end)
     
-    applyRepairBoostToCharacter()
     interceptRepairRemotes()
 end
 
@@ -1272,7 +1179,6 @@ SurvivorTab:CreateToggle({
             cleanupBoostAttributes()
             startRepairBoostMaintenance()
             
-            -- Reconectar cuando cambie el personaje
             LP.CharacterAdded:Connect(function()
                 task.wait(1)
                 if repairBoostEnabled then
@@ -1281,24 +1187,8 @@ SurvivorTab:CreateToggle({
                 end
             end)
             
-            local boostMultiplier = repairBoostValues[repairBoostLevel] or 1.05
-            local boostPercent = (boostMultiplier - 1.0) * 100
-            
-            Rayfield:Notify({
-                Title = "Generator Boost",
-                Content = string.format("✅ Activado - Nivel %d: ×%.2f (+%.0f%%)", 
-                    repairBoostLevel, boostMultiplier, boostPercent),
-                Duration = 3
-            })
-            
         else
             cleanupBoostAttributes()
-            
-            Rayfield:Notify({
-                Title = "Generator Boost",
-                Content = "❌ Desactivado",
-                Duration = 3
-            })
         end
     end
 })
@@ -1313,11 +1203,17 @@ SurvivorTab:CreateSlider({
     Callback = function(v)
         repairBoostLevel = math.floor(v)
         
-        local boostMultiplier = repairBoostValues[repairBoostLevel] or 1.05
-        local boostPercent = (boostMultiplier - 1.0) * 100
-        
         if repairBoostEnabled then
-            lastAppliedBoost = 0  -- Forzar reaplicación
+            lastAppliedBoost = 0
+        end
+    end
+})
+
+SurvivorTab:CreateButton({
+    Name = "Reparación Instantánea",
+    Callback = function()
+        if repairBoostEnabled then
+            instantGeneratorRepair()
         end
     end
 })

@@ -870,9 +870,8 @@ SurvivorTab:CreateToggle({
                 end
             end)
             
-            -- Calcular porcentaje para mostrar (mostrar 5% por nivel en lugar de 0.5%)
             local boostMultiplier = speedBoostValues[speedBoostLevel] or 1.05
-            local showPercent = (boostMultiplier - 1.0) * 100 * 10  -- Escalar para mostrar 5% por nivel
+            local showPercent = (boostMultiplier - 1.0) * 100 * 10
             
             Rayfield:Notify({
                 Title = "Speed Boost",
@@ -1210,7 +1209,7 @@ local function applyBoostToExistingGenerators()
                     local currentProgress = generator:GetAttribute("Progress") or 
                                           generator:GetAttribute("progress") or 0
                     if type(currentProgress) == "number" and currentProgress < 100 then
-                        local increment = 0.1 * boostMultiplier  -- Más pequeño para evitar detección
+                        local increment = 0.2 * boostMultiplier
                         generator:SetAttribute("Progress", math.min(100, currentProgress + increment))
                         generator:SetAttribute("progress", math.min(100, currentProgress + increment))
                     end
@@ -1225,7 +1224,7 @@ local function monitorNewGenerators()
     workspace.DescendantAdded:Connect(function(descendant)
         if descendant:IsA("Model") and (descendant.Name:lower():find("generator") or 
            descendant.Name:lower():find("gen_")) and repairBoostEnabled then
-            task.wait(0.5)
+            task.wait(1.5)
             applyBoostToExistingGenerators()
         end
     end)
@@ -1805,7 +1804,7 @@ local function startAutoHeal(targetChar)
                 end
                 sendCompleteHealEvent(targetChar)
             end)
-            task.wait(0.5)
+            task.wait(1.5)
             char:SetAttribute("IsHealing", false)
         end
     end)
@@ -2003,7 +2002,7 @@ local function preventFallSlowdown()
                 -- Si está cayendo muy rápido (probablemente de gran altura)
                 if velocity.Y < -50 then
                     -- Solo prevenir si es una caída significativa
-                    task.wait(0.1)
+                    task.wait(1)
                 end
             end
         end
@@ -2130,7 +2129,7 @@ SurvivorTab:CreateToggle({
                         
                         if name:find("jump") or name:find("saltar") or 
                            text:find("jump") or text:find("saltar") then
-                            task.wait(0.5)
+                            task.wait(1.5)
                             hideJumpButtons()
                         end
                     end
@@ -2655,7 +2654,7 @@ KillerTab:CreateToggle({
             
         else
             if not antiStunEnabled and antiStunConnection then
-                antiStunConnection:Disconnect()
+                antiStunConnection:Disconnect() 
                 antiStunConnection = nil
             end
             
@@ -2669,18 +2668,27 @@ KillerTab:CreateToggle({
 })
 
 -- ============================================
--- 20. SISTEMA HITBOX EXPANDER (KILLER TAB)
+-- SISTEMA HITBOX EXPANDER COMPLETO (KILLER TAB)
 -- ============================================
 
+-- Configuración principal
 local hitboxExpanderEnabled = false
 local hitboxSize = 15
 local hitboxTransparency = 0.6
-local hitboxColor = Color3.fromRGB(0, 255, 0)  -- Verde para survivors
+local hitboxColor = Color3.fromRGB(0, 255, 0)
 local originalSizes = {}
 local hitboxConnections = {}
 local damageRemote = nil
 
--- Función para encontrar el remote de daño
+-- Configuración visualización
+local showHitboxVisual = false
+local hitboxVisualObjects = {}
+local hitboxVisualConnections = {}
+local hitboxVisualLoopConnection = nil
+local hitboxLoopConnection = nil
+
+-- ============ FUNCIONES HITBOX EXPANDER ============
+
 local function getDamageRemote()
     if damageRemote then return damageRemote end
     
@@ -2697,7 +2705,6 @@ local function getDamageRemote()
     return nil
 end
 
--- Función para aplicar daño a survivors
 local function applyDamageToPlayer(targetPlayer)
     if not targetPlayer or not targetPlayer.Character then return end
     
@@ -2722,7 +2729,6 @@ local function applyDamageToPlayer(targetPlayer)
     end
 end
 
--- Función para aplicar hitboxes a todos los jugadores menos a nosotros
 local function applyHitboxExpander()
     if not hitboxExpanderEnabled then return end
     
@@ -2764,7 +2770,6 @@ local function applyHitboxExpander()
     end
 end
 
--- Función para restaurar hitboxes originales
 local function restoreOriginalHitboxes()
     for part, data in pairs(originalSizes) do
         if part and part.Parent then
@@ -2781,7 +2786,6 @@ local function restoreOriginalHitboxes()
     originalSizes = {}
 end
 
--- Función para monitorear jugadores
 local function setupPlayerMonitoring()
     for _, conn in ipairs(hitboxConnections) do
         conn:Disconnect()
@@ -2790,7 +2794,7 @@ local function setupPlayerMonitoring()
     
     local playerAddedConn = Players.PlayerAdded:Connect(function(player)
         player.CharacterAdded:Connect(function(character)
-            task.wait(0.5)
+            task.wait(1)
             if hitboxExpanderEnabled then
                 local head = character:FindFirstChild("Head")
                 if head and originalSizes[head] then
@@ -2804,7 +2808,7 @@ local function setupPlayerMonitoring()
     for _, player in ipairs(Players:GetPlayers()) do
         if player ~= LP then
             local charConn = player.CharacterAdded:Connect(function(character)
-                task.wait(0.5)
+                task.wait(1)
                 if hitboxExpanderEnabled then
                     local head = character:FindFirstChild("Head")
                     if head and originalSizes[head] then
@@ -2816,9 +2820,6 @@ local function setupPlayerMonitoring()
         end
     end
 end
-
--- Conexión principal
-local hitboxLoopConnection = nil
 
 local function startHitboxExpander()
     if hitboxLoopConnection then
@@ -2846,7 +2847,149 @@ local function stopHitboxExpander()
     hitboxConnections = {}
 end
 
--- INTERFAZ EN KILLERTAB
+-- ============ FUNCIONES VISUALIZACIÓN HITBOX ============
+
+local function createHitboxVisual(player)
+    if not player or not player.Character or hitboxVisualObjects[player] then return end
+    
+    local character = player.Character
+    local head = character:FindFirstChild("Head")
+    if not head then return end
+    
+    if not originalSizes[head] then return end
+    
+    local hitboxSphere = Instance.new("Part")
+    hitboxSphere.Name = "HitboxVisual"
+    hitboxSphere.Shape = Enum.PartType.Ball
+    hitboxSphere.Size = Vector3.new(hitboxSize, hitboxSize, hitboxSize)
+    hitboxSphere.Transparency = hitboxTransparency
+    hitboxSphere.Color = hitboxColor
+    hitboxSphere.Material = Enum.Material.Neon
+    hitboxSphere.CanCollide = false
+    hitboxSphere.CastShadow = false
+    hitboxSphere.Anchored = true
+    
+    hitboxVisualObjects[player] = {
+        sphere = hitboxSphere,
+        player = player
+    }
+    
+    hitboxVisualObjects[player].connection = RunService.Heartbeat:Connect(function()
+        if not character or not character.Parent or not head.Parent then
+            removeHitboxVisual(player)
+            return
+        end
+        
+        hitboxSphere.CFrame = head.CFrame
+        hitboxSphere.Size = Vector3.new(hitboxSize, hitboxSize, hitboxSize)
+        hitboxSphere.Color = hitboxColor
+        hitboxSphere.Transparency = hitboxTransparency
+    end)
+    
+    hitboxSphere.Parent = workspace
+end
+
+local function removeHitboxVisual(player)
+    if hitboxVisualObjects[player] then
+        local visualData = hitboxVisualObjects[player]
+        
+        if visualData.connection then
+            visualData.connection:Disconnect()
+        end
+        
+        if visualData.sphere and visualData.sphere.Parent then
+            visualData.sphere:Destroy()
+        end
+        
+        hitboxVisualObjects[player] = nil
+    end
+end
+
+local function updateAllHitboxVisuals()
+    if not showHitboxVisual then return end
+    
+    for _, player in ipairs(Players:GetPlayers()) do
+        if player ~= LP and player.Character then
+            local head = player.Character:FindFirstChild("Head")
+            if head and originalSizes[head] then
+                if not hitboxVisualObjects[player] then
+                    createHitboxVisual(player)
+                end
+            else
+                removeHitboxVisual(player)
+            end
+        else
+            removeHitboxVisual(player)
+        end
+    end
+end
+
+local function cleanupAllHitboxVisuals()
+    for player, _ in pairs(hitboxVisualObjects) do
+        removeHitboxVisual(player)
+    end
+    hitboxVisualObjects = {}
+    
+    for _, conn in ipairs(hitboxVisualConnections) do
+        conn:Disconnect()
+    end
+    hitboxVisualConnections = {}
+end
+
+local function startHitboxVisual()
+    if hitboxVisualLoopConnection then
+        hitboxVisualLoopConnection:Disconnect()
+    end
+    
+    hitboxVisualLoopConnection = RunService.Heartbeat:Connect(function()
+        updateAllHitboxVisuals()
+    end)
+    
+    local playerAddedConn = Players.PlayerAdded:Connect(function(player)
+        player.CharacterAdded:Connect(function()
+            task.wait(1)
+            if showHitboxVisual then
+                updateAllHitboxVisuals()
+            end
+        end)
+    end)
+    table.insert(hitboxVisualConnections, playerAddedConn)
+    
+    for _, player in ipairs(Players:GetPlayers()) do
+        if player ~= LP then
+            local charConn = player.CharacterAdded:Connect(function()
+                task.wait(1)
+                if showHitboxVisual then
+                    updateAllHitboxVisuals()
+                end
+            end)
+            table.insert(hitboxVisualConnections, charConn)
+        end
+    end
+end
+
+local function stopHitboxVisual()
+    if hitboxVisualLoopConnection then
+        hitboxVisualLoopConnection:Disconnect()
+        hitboxVisualLoopConnection = nil
+    end
+    
+    cleanupAllHitboxVisuals()
+end
+
+-- Función para sincronizar visualización con hitbox expander
+local function syncHitboxVisualWithExpander()
+    if showHitboxVisual then
+        if hitboxExpanderEnabled then
+            updateAllHitboxVisuals()
+        else
+            cleanupAllHitboxVisuals()
+        end
+    end
+end
+
+-- ============ INTERFAZ KILLERTAB ============
+
 KillerTab:CreateSection("Hitbox Expander (Survivors)")
 
 KillerTab:CreateToggle({
@@ -2858,6 +3001,7 @@ KillerTab:CreateToggle({
         
         if v then
             startHitboxExpander()
+            syncHitboxVisualWithExpander()
             Rayfield:Notify({
                 Title = "Hitbox Expander",
                 Content = "✅ Activado - Hitboxes verdes en survivors",
@@ -2865,6 +3009,7 @@ KillerTab:CreateToggle({
             })
         else
             stopHitboxExpander()
+            syncHitboxVisualWithExpander()
             Rayfield:Notify({
                 Title = "Hitbox Expander",
                 Content = "❌ Desactivado",
@@ -2874,6 +3019,7 @@ KillerTab:CreateToggle({
     end
 })
 
+-- Slider tamaño
 KillerTab:CreateSlider({
     Name = "Tamaño Hitbox",
     Range = {5, 30},
@@ -2883,6 +3029,11 @@ KillerTab:CreateSlider({
     Flag = "HitboxSizeSlider",
     Callback = function(v)
         hitboxSize = math.floor(v)
+        
+        -- Actualizar visualización si está activa
+        if showHitboxVisual then 
+            updateAllHitboxVisuals() 
+        end
         
         if hitboxExpanderEnabled then
             Rayfield:Notify({
@@ -2894,6 +3045,7 @@ KillerTab:CreateSlider({
     end
 })
 
+-- Slider transparencia
 KillerTab:CreateSlider({
     Name = "Transparencia Hitbox",
     Range = {0.1, 0.9},
@@ -2902,6 +3054,11 @@ KillerTab:CreateSlider({
     Flag = "HitboxTransparencySlider",
     Callback = function(v)
         hitboxTransparency = v
+        
+        -- Actualizar visualización si está activa
+        if showHitboxVisual then 
+            updateAllHitboxVisuals() 
+        end
         
         if hitboxExpanderEnabled then
             Rayfield:Notify({
@@ -2913,12 +3070,18 @@ KillerTab:CreateSlider({
     end
 })
 
+-- Color picker
 KillerTab:CreateColorPicker({
     Name = "Color Hitbox",
     Color = hitboxColor,
     Flag = "HitboxColorPicker",
     Callback = function(v)
         hitboxColor = v
+        
+        -- Actualizar visualización si está activa
+        if showHitboxVisual then 
+            updateAllHitboxVisuals() 
+        end
         
         if hitboxExpanderEnabled then
             Rayfield:Notify({
@@ -2930,6 +3093,40 @@ KillerTab:CreateColorPicker({
     end
 })
 
+-- Toggle visualización
+KillerTab:CreateToggle({
+    Name = "Mostrar Hitboxes Verdes",
+    CurrentValue = false,
+    Flag = "HitboxVisualToggle",
+    Callback = function(v)
+        showHitboxVisual = v
+        
+        if v then
+            if not hitboxExpanderEnabled then
+                Rayfield:Notify({
+                    Title = "Hitbox Visual",
+                    Content = "⚠️ Activa Hitbox Expander primero para ver hitboxes",
+                    Duration = 3
+                })
+                return
+            end
+            
+            startHitboxVisual()
+            Rayfield:Notify({
+                Title = "Hitbox Visual",
+                Content = "✅ Activado ",
+                Duration = 3
+            })
+        else
+            stopHitboxVisual()
+            Rayfield:Notify({
+                Title = "Hitbox Visual",
+                Content = "❌ Desactivado",
+                Duration = 3
+            })
+        end
+    end
+})
 -- ============================================
 -- 21. SISTEMA FULL BREAK GENERATOR (KILLER TAB)
 -- ============================================

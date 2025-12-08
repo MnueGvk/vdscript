@@ -736,85 +736,57 @@ VisualTab:CreateColorPicker({
 -- ============================================
 -- 12. SISTEMA SPEED BOOST (SURVIVOR TAB)
 -- ============================================
--- ============================================
--- SPEED BOOST COMPLETO (CORREGIDO)
--- ============================================
 
 local speedBoostEnabled = false
-local speedBoostLevel = 1
-local speedBoostValues = {
-    [1] = 0.10,  -- +10%
-    [2] = 0.20,  -- +20%
-    [3] = 0.30,  -- +30%
-    [4] = 0.40,  -- +40%
-    [5] = 0.50,  -- +50%
-    [6] = 0.60,  -- +60%
-    [7] = 0.70,  -- +70%
-    [8] = 0.80,  -- +80%
-    [9] = 0.90,  -- +90%
-    [10] = 1.00  -- +100%
-}
+local speedBoostLevel = 1  -- Nivel 1-5
+local speedBoostValues = {1.005, 1.010, 1.015, 1.020, 1.025}  -- VALORES PEQUEÑOS: 5% real por nivel
 local speedBoostConnection = nil
 local originalWalkspeed = 16
 local characterAddedConnection = nil
-local isBoostActive = false
-local lastAppliedSpeedBoost = 0
-local isInitialized = false
 
--- Función para aplicar el speed boost CORREGIDO
+-- Función para aplicar el speed boost permanentemente
 local function applySpeedBoost()
     local char = LP.Character
-    if not char then return end
-    
-    local humanoid = char:FindFirstChildOfClass("Humanoid")
-    if not humanoid then return end
-    
-    -- Solo aplicar si el nivel cambió o es la primera vez
-    if lastAppliedSpeedBoost == speedBoostLevel and isInitialized then return end
-    
-    -- Guardar velocidad original si es la primera vez
-    if not isInitialized then
-        originalWalkspeed = humanoid.WalkSpeed
+    if char then
+        local humanoid = char:FindFirstChildOfClass("Humanoid")
+        if humanoid then
+            -- Guardar velocidad original solo la primera vez
+            if originalWalkspeed == 16 then
+                originalWalkspeed = humanoid.WalkSpeed
+            end
+            
+            if speedBoostEnabled then
+                local boostMultiplier = speedBoostValues[speedBoostLevel] or 1.005
+                local newSpeed = originalWalkspeed * boostMultiplier
+                
+                -- Aplicar velocidad boosteada
+                humanoid.WalkSpeed = newSpeed
+                
+                -- Aplicar atributos de boost CON VALORES PEQUEÑOS
+                pcall(function()
+                    -- Enviar valor pequeño, no el nivel
+                    char:SetAttribute("speedboost", boostMultiplier)  -- Valor pequeño
+                    char:SetAttribute("gp_applied_by", LP.UserId)
+                    
+                    -- Atributo IsRunning para indicar que tiene speed boost activo
+                    char:SetAttribute("IsRunning", true)
+                end)
+            else
+                -- Restaurar velocidad original
+                humanoid.WalkSpeed = originalWalkspeed
+                
+                -- Limpiar atributos de boost
+                pcall(function()
+                    char:SetAttribute("speedboost", nil)
+                    char:SetAttribute("gp_applied_by", nil)
+                    char:SetAttribute("IsRunning", false)
+                end)
+            end
+        end
     end
-    
-    if speedBoostEnabled then
-      
-        local boostPercent = speedBoostValues[speedBoostLevel] or 0.10
-        local boostMultiplier = 1.0 + boostPercent
-        
-        -- Calcular nueva velocidad
-        local newSpeed = originalWalkspeed * boostMultiplier
-        
-        -- Aplicar velocidad con límite razonable
-        humanoid.WalkSpeed = math.min(newSpeed, 60)
-        
-        -- Aplicar atributos
-        pcall(function()
-            char:SetAttribute("speedboost", speedBoostLevel)
-            char:SetAttribute("gp_applied_by", LP.UserId)
-            char:SetAttribute("IsRunning", true)
-        end)
-        
-        -- Debug (opcional)
-        print(string.format("[Speed Boost] Nivel %d: +%.0f%% (original: %.1f, actual: %.1f)", 
-            speedBoostLevel, boostPercent * 100, originalWalkspeed, humanoid.WalkSpeed))
-    else
-        -- Restaurar velocidad
-        humanoid.WalkSpeed = originalWalkspeed
-        
-        -- Limpiar atributos
-        pcall(function()
-            char:SetAttribute("speedboost", nil)
-            char:SetAttribute("gp_applied_by", nil)
-            char:SetAttribute("IsRunning", false)
-        end)
-    end
-    
-    lastAppliedSpeedBoost = speedBoostLevel
-    isInitialized = true
 end
 
--- Función para mantener el boost activo
+-- Función para mantener el boost activo constantemente
 local function maintainSpeedBoost()
     if speedBoostConnection then
         speedBoostConnection:Disconnect()
@@ -822,34 +794,14 @@ local function maintainSpeedBoost()
     
     speedBoostConnection = RunService.Heartbeat:Connect(function()
         if not speedBoostEnabled then return end
-        
-        -- Verificar si la velocidad se ha reducido (por efectos del juego)
-        local char = LP.Character
-        if char then
-            local humanoid = char:FindFirstChildOfClass("Humanoid")
-            if humanoid and isInitialized then
-                local boostPercent = speedBoostValues[speedBoostLevel] or 0.10
-                local boostMultiplier = 1.0 + boostPercent
-                local expectedSpeed = originalWalkspeed * boostMultiplier
-                
-                -- Si la velocidad actual es significativamente menor que la esperada
-                if humanoid.WalkSpeed < expectedSpeed * 0.9 then
-                    humanoid.WalkSpeed = expectedSpeed
-                    lastAppliedSpeedBoost = 0  -- Forzar reaplicación
-                end
-            end
-        end
-        
         applySpeedBoost()
     end)
     
     -- Aplicar inmediatamente
-    lastAppliedSpeedBoost = 0
-    isInitialized = false
     applySpeedBoost()
 end
 
--- Función para limpiar al desactivar
+-- Función para limpiar todo al desactivar
 local function cleanupSpeedBoost()
     if speedBoostConnection then
         speedBoostConnection:Disconnect()
@@ -861,11 +813,7 @@ local function cleanupSpeedBoost()
         characterAddedConnection = nil
     end
     
-    lastAppliedSpeedBoost = 0
-    isInitialized = false
-    isBoostActive = false
-    
-    -- Restaurar velocidad
+    -- Restaurar velocidad y limpiar atributos
     local char = LP.Character
     if char then
         local humanoid = char:FindFirstChildOfClass("Humanoid")
@@ -881,6 +829,7 @@ local function cleanupSpeedBoost()
     end
 end
 
+-- Sección Speed Boost
 SurvivorTab:CreateSection("Speed Boost")
 
 SurvivorTab:CreateToggle({
@@ -891,27 +840,49 @@ SurvivorTab:CreateToggle({
         speedBoostEnabled = v
         
         if v then
-            cleanupSpeedBoost()  -- Limpiar primero
-            maintainSpeedBoost()  -- Iniciar sistema
+            -- Limpiar primero cualquier estado anterior
+            cleanupSpeedBoost()
             
-            -- Reconectar cuando cambie el personaje
+            -- Guardar velocidad original del personaje actual
+            local char = LP.Character
+            if char then
+                local humanoid = char:FindFirstChildOfClass("Humanoid")
+                if humanoid then
+                    originalWalkspeed = humanoid.WalkSpeed
+                end
+            end
+            
+            -- Iniciar sistema de boost permanente
+            maintainSpeedBoost()
+            
+            -- Configurar reconexión cuando cambie el personaje
             characterAddedConnection = LP.CharacterAdded:Connect(function()
-                task.wait(0.5)
+                task.wait(0.5)  -- Esperar a que cargue el personaje
                 if speedBoostEnabled then
-                    lastAppliedSpeedBoost = 0
-                    isInitialized = false
-                    maintainSpeedBoost()
+                    local char = LP.Character
+                    if char then
+                        local humanoid = char:FindFirstChildOfClass("Humanoid")
+                        if humanoid then
+                            originalWalkspeed = humanoid.WalkSpeed
+                            applySpeedBoost()
+                        end
+                    end
                 end
             end)
             
-            local boostPercent = speedBoostValues[speedBoostLevel] or 0.10
+            -- Calcular porcentaje para mostrar (mostrar 5% por nivel en lugar de 0.5%)
+            local boostMultiplier = speedBoostValues[speedBoostLevel] or 1.005
+            local showPercent = (boostMultiplier - 1.0) * 100 * 10  -- Escalar para mostrar 5% por nivel
+            
             Rayfield:Notify({
                 Title = "Speed Boost",
-                Content = string.format("✅ Activado - Nivel %d: +%.0f%%", speedBoostLevel, boostPercent * 100),
+                Content = string.format("✅ Activado (Nivel %d: +%.0f%%)", 
+                    speedBoostLevel, showPercent),
                 Duration = 3
             })
             
         else
+            -- Desactivar completamente
             cleanupSpeedBoost()
             
             Rayfield:Notify({
@@ -923,33 +894,74 @@ SurvivorTab:CreateToggle({
     end
 })
 
+-- Slider para niveles del speed boost
 SurvivorTab:CreateSlider({
     Name = "Nivel Speed Boost",
-    Range = {1, 10},
+    Range = {1, 5},
     Increment = 1,
-    Suffix = " (1=+10%, 2=+20%, 3=+30%, 4=+40%, 5=+50%, 6=+60%, 7=+70%, 8=+80%, 9=+90%, 10=+100%)",
+    Suffix = " (+10% por nivel)",
     CurrentValue = speedBoostLevel,
     Flag = "SpeedBoostLevel",
     Callback = function(v)
         speedBoostLevel = math.floor(v)
         
-        local boostPercent = speedBoostValues[speedBoostLevel] or 0.10
-        
+        -- Actualizar si está activo
         if speedBoostEnabled then
-            lastAppliedSpeedBoost = 0
             applySpeedBoost()
+            
+            -- Calcular porcentaje para mostrar
+            local boostMultiplier = speedBoostValues[speedBoostLevel] or 1.005
+            local showPercent = (boostMultiplier - 1.0) * 100 * 10
             
             Rayfield:Notify({
                 Title = "Speed Boost",
-                Content = string.format("📊 Nivel %d: +%.0f%% de velocidad", speedBoostLevel, boostPercent * 100),
+                Content = string.format("📊 Nivel %d: +%.0f%% de velocidad", 
+                    speedBoostLevel, showPercent),
                 Duration = 2
             })
         else
+            -- Solo mostrar notificación de configuración
+            local boostMultiplier = speedBoostValues[speedBoostLevel] or 1.005
+            local showPercent = (boostMultiplier - 1.0) * 100 * 10
+            
             Rayfield:Notify({
                 Title = "Speed Boost",
-                Content = string.format("📊 Nivel %d configurado: +%.0f%%", speedBoostLevel, boostPercent * 100),
+                Content = string.format("📊 Nivel %d configurado: +%.0f%%", 
+                    speedBoostLevel, showPercent),
                 Duration = 2
             })
+        end
+    end
+})
+
+-- Botón para resetear velocidad (por si hay problemas)
+SurvivorTab:CreateButton({
+    Name = "Resetear Velocidad",
+    Callback = function()
+        local char = LP.Character
+        if char then
+            local humanoid = char:FindFirstChildOfClass("Humanoid")
+            if humanoid then
+                if speedBoostEnabled then
+                    -- Solo resetear la velocidad actual manteniendo el boost
+                    local boostMultiplier = speedBoostValues[speedBoostLevel] or 1.005
+                    humanoid.WalkSpeed = originalWalkspeed * boostMultiplier
+                    
+                    Rayfield:Notify({
+                        Title = "Speed Boost",
+                        Content = "✅ Velocidad reseteada (boost mantenido)",
+                        Duration = 2
+                    })
+                else
+                    humanoid.WalkSpeed = originalWalkspeed
+                    
+                    Rayfield:Notify({
+                        Title = "Speed Boost",
+                        Content = "✅ Velocidad restaurada a normal",
+                        Duration = 2
+                    })
+                end
+            end
         end
     end
 })
@@ -960,229 +972,372 @@ SurvivorTab:CreateSlider({
 
 local repairBoostEnabled = false
 local repairBoostLevel = 1
-local repairBoostValues = {
-    [1] = 0.10,   -- +10%
-    [2] = 0.20,   -- +20%
-    [3] = 0.30,   -- +30%
-    [4] = 0.40,   -- +40%
-    [5] = 0.50,   -- +50%
-    [6] = 0.60,   -- +60%
-    [7] = 0.70,   -- +70%
-    [8] = 0.80,   -- +80%
-    [9] = 0.90,   -- +90%
-    [10] = 1.00   -- +100%
-}
+local repairBoostValues = {1, 1.1, 1.2, 1.3, 1.4}
 local repairBoostConnection = nil
+local repairMaintenanceConnection = nil
 local originalRemoteFunctions = {}
 local interceptedRemotes = {}
-local isRepairBoostActive = false
-local lastAppliedBoost = 0
+local lastBoostTime = 0
+local boostCheckInterval = 0.3
 
--- Función para aplicar atributos CORREGIDA
+-- Función para aplicar atributos al personaje
 local function applyRepairBoostToCharacter()
     if not repairBoostEnabled or not LP.Character then return end
     
-    -- Solo aplicar si el nivel cambió
-    if lastAppliedBoost == repairBoostLevel then return end
-    
-    local boostPercent = repairBoostValues[repairBoostLevel] or 0.10
-    local boostMultiplier = 1.0 + boostPercent
+    local boostMultiplier = repairBoostValues[repairBoostLevel] or 1
     
     pcall(function()
-        LP.Character:SetAttribute("repairboost", repairBoostLevel)
-        LP.Character:SetAttribute("gp_applied_by", LP.UserId)
-        LP.Character:SetAttribute("GroupProject", 3)
-    end)
-    
-    lastAppliedBoost = repairBoostLevel
-    isRepairBoostActive = true
-    
-    print(string.format("[Generator Boost] Nivel %d: +%.0f%% (multiplicador: %.2f)", 
-        repairBoostLevel, boostPercent * 100, boostMultiplier))
-end
-
--- Función para interceptar remotes CORREGIDA
-local function interceptRepairRemotes()
-    -- Limpiar interceptaciones anteriores
-    for obj, originalFunc in pairs(originalRemoteFunctions) do
-        if obj:IsA("RemoteEvent") then
-            obj.FireServer = originalFunc
-        elseif obj:IsA("RemoteFunction") then
-            obj.InvokeServer = originalFunc
-        end
-    end
-    originalRemoteFunctions = {}
-    interceptedRemotes = {}
-    
-    -- Buscar remotes de reparación
-    for _, obj in ipairs(game:GetDescendants()) do
-        if (obj:IsA("RemoteEvent") or obj:IsA("RemoteFunction")) and not interceptedRemotes[obj] then
-            local nameLower = obj.Name:lower()
-            if nameLower:find("repair") or nameLower:find("generator") or 
-               nameLower:find("progress") or nameLower:find("fix") then
-                
-                interceptedRemotes[obj] = true
-                
-                if obj:IsA("RemoteEvent") then
-                    local originalFire = obj.FireServer
-                    originalRemoteFunctions[obj] = originalFire
-                    
-                    obj.FireServer = function(self, ...)
-                        local args = {...}
-                        
-                        if repairBoostEnabled then
-                            local boostPercent = repairBoostValues[repairBoostLevel] or 0.10
-                            local boostMultiplier = 1.0 + boostPercent  -- CORRECTO
-                            local modifiedArgs = {}
-                            
-                            for i, arg in ipairs(args) do
-                                if type(arg) == "number" then
-                                    -- Solo modificar si es un valor de progreso (no multiplicar múltiples veces)
-                                    modifiedArgs[i] = arg * boostMultiplier
-                                elseif type(arg) == "table" then
-                                    local modifiedTable = {}
-                                    for k, v in pairs(arg) do
-                                        if type(v) == "number" and 
-                                           (k:lower():find("progress") or k:lower():find("amount")) then
-                                            modifiedTable[k] = v * boostMultiplier
-                                        else
-                                            modifiedTable[k] = v
-                                        end
-                                    end
-                                    modifiedArgs[i] = modifiedTable
-                                else
-                                    modifiedArgs[i] = arg
-                                end
-                            end
-                            
-                            return originalFire(self, unpack(modifiedArgs))
-                        end
-                        
-                        return originalFire(self, ...)
-                    end
-                    
-                elseif obj:IsA("RemoteFunction") then
-                    local originalInvoke = obj.InvokeServer
-                    originalRemoteFunctions[obj] = originalInvoke
-                    
-                    obj.InvokeServer = function(self, ...)
-                        if repairBoostEnabled then
-                            local boostPercent = repairBoostValues[repairBoostLevel] or 0.10
-                            local boostMultiplier = 1.0 + boostPercent  -- CORRECTO
-                            local result = originalInvoke(self, ...)
-                            
-                            if type(result) == "number" then
-                                return result * boostMultiplier
-                            end
-                        end
-                        
-                        return originalInvoke(self, ...)
-                    end
-                end
+        -- Atributos específicos en minúsculas según tu especificación
+        LP.Character:SetAttribute("repairboost", boostMultiplier)  -- minúscula
+        LP.Character:SetAttribute("gp_applied_by", LP.UserId)      -- minúscula
+        
+        -- GroupProject con sus mayúsculas exactas
+        local repairingGenerators = LP.Character:FindFirstChild("RepairingGenerators")
+        if repairingGenerators and repairingGenerators:IsA("NumberValue") then
+            if repairingGenerators.Value > 0 then
+                LP.Character:SetAttribute("GroupProject", math.min(3, repairingGenerators.Value))  -- con mayúsculas
+            else
+                LP.Character:SetAttribute("GroupProject", 1)  -- con mayúsculas
             end
-        end
-    end
+            end
+        lastBoostTime = tick()  -- Actualizar tiempo del último boost
+    end)
 end
 
--- Función para mantener el boost siempre activo
+-- NUEVA: Función para mantener los atributos constantemente
 local function maintainRepairBoost()
-    if repairBoostConnection then
-        repairBoostConnection:Disconnect()
+    if not repairBoostEnabled then return end
+    
+    local currentTime = tick()
+    
+    -- Verificar si los atributos siguen activos en el personaje
+    if LP.Character then
+        pcall(function()
+            local currentBoost = LP.Character:GetAttribute("repairboost")
+            local currentApplier = LP.Character:GetAttribute("gp_applied_by")
+            local currentGroup = LP.Character:GetAttribute("GroupProject")
+            
+            -- Si faltan atributos o han pasado más de 0.5 segundos, reaplicar
+            if not currentBoost or not currentApplier or not currentGroup or 
+               (currentTime - lastBoostTime) > 0.5 then
+                applyRepairBoostToCharacter()
+            end
+        end)
     end
     
-    repairBoostConnection = RunService.Heartbeat:Connect(function()
-        if not repairBoostEnabled then return end
-        
-        -- Aplicar atributos constantemente
-        applyRepairBoostToCharacter()
-        
-        -- Verificar y mantener atributos en generadores cercanos
-        local char = LP.Character
-        if char then
-            for _, generator in ipairs(workspace:GetDescendants()) do
-                if generator:IsA("Model") and generator.Name:lower():find("generator") then
+    -- También verificar y mantener atributos en generadores cercanos
+    for _, generator in ipairs(workspace:GetDescendants()) do
+        if generator:IsA("Model") and (generator.Name:lower():find("generator") or 
+           generator.Name:lower():find("gen_") or generator.Name:lower():find("machine")) then
+            
+            local char = LP.Character
+            if char then
+                local rootPart = char:FindFirstChild("HumanoidRootPart")
+                if rootPart and (rootPart.Position - generator.Position).Magnitude < 15 then
                     pcall(function()
-                        local rootPart = char:FindFirstChild("HumanoidRootPart")
-                        if rootPart and (rootPart.Position - generator.Position).Magnitude < 20 then
-                            generator:SetAttribute("repairboost", repairBoostLevel)
-                            generator:SetAttribute("gp_applied_by", LP.UserId)
+                        local generatorBoost = generator:GetAttribute("repairboost")
+                        local generatorApplier = generator:GetAttribute("gp_applied_by")
+                        local generatorGroup = generator:GetAttribute("GroupProject")
+                        
+                        -- Si faltan atributos o el applier no es nosotros, reaplicar
+                        if not generatorBoost or generatorApplier ~= LP.UserId or not generatorGroup then
+                            local boostMultiplier = repairBoostValues[repairBoostLevel] or 1
+                            
+                            generator:SetAttribute("repairboost", repairBoostLevel)  -- minúscula
+                            generator:SetAttribute("gp_applied_by", LP.UserId)      -- minúscula
+                            
+                            local currentGroup = generator:GetAttribute("GroupProject") or 0
+                            if currentGroup < 1 then
+                                generator:SetAttribute("GroupProject", 1)
+                            end
                         end
                     end)
                 end
             end
         end
-    end)
-    
-    -- Aplicar inmediatamente
-    applyRepairBoostToCharacter()
-    interceptRepairRemotes()
+    end
 end
 
--- Función para limpiar
-local function cleanupRepairBoost()
-    if repairBoostConnection then
-        repairBoostConnection:Disconnect()
-        repairBoostConnection = nil
+-- Función para interceptar remotes de reparación
+local function interceptRepairRemotes()
+    for _, obj in ipairs(game:GetDescendants()) do
+        if obj:IsA("RemoteEvent") or obj:IsA("RemoteFunction") then
+            local nameLower = obj.Name:lower()
+            if nameLower:find("repair") or nameLower:find("generator") or 
+               nameLower:find("fix") or nameLower:find("progress") then
+                
+                if not interceptedRemotes[obj] then
+                    interceptedRemotes[obj] = true
+                    
+                    if obj:IsA("RemoteEvent") then
+                        local originalFire = obj.FireServer
+                        originalRemoteFunctions[obj] = originalFire
+                        
+                        obj.FireServer = function(self, ...)
+                            local args = {...}
+                            
+                            if repairBoostEnabled then
+                                local boostMultiplier = repairBoostValues[repairBoostLevel] or 1
+                                
+                                -- Aplicar boost al personaje antes de enviar
+                                applyRepairBoostToCharacter()
+                                
+                                -- Modificar argumentos de progreso
+                                for i, arg in ipairs(args) do
+                                    -- Modificar números (progreso)
+                                    if type(arg) == "number" then
+                                        args[i] = arg * boostMultiplier
+                                    
+                                    -- Modificar tablas
+                                    elseif type(arg) == "table" then
+                                        local modifiedTable = {}
+                                        for k, v in pairs(arg) do
+                                            if (k:lower() == "progress" or k:lower() == "amount" or 
+                                                k:lower() == "speed" or k:lower() == "repairspeed" or 
+                                                k:lower() == "value") and type(v) == "number" then
+                                                modifiedTable[k] = v * boostMultiplier
+                                            else
+                                                modifiedTable[k] = v
+                                            end
+                                        end
+                                        args[i] = modifiedTable
+                                    
+                                    -- Modificar modelos de generadores
+                                    elseif type(arg) == "Instance" and arg:IsA("Model") then
+                                        if arg.Name:lower():find("generator") or arg.Name:lower():find("gen_") then
+                                            pcall(function()
+                                                -- Atributos específicos en minúsculas
+                                                arg:SetAttribute("repairboost", repairBoostLevel)  -- minúscula
+                                                arg:SetAttribute("gp_applied_by", LP.UserId)      -- minúscula
+                                                
+                                                -- GroupProject con mayúsculas
+                                                local currentGroup = arg:GetAttribute("GroupProject") or 0
+                                                if currentGroup > 0 then
+                                                    arg:SetAttribute("GroupProject", math.min(3, currentGroup + 1))
+                                                else
+                                                    arg:SetAttribute("GroupProject", 1)
+                                                end
+                                            end)
+                                        end
+                                    end
+                                end
+                            end
+                            
+                            return originalFire(self, unpack(args))
+                        end
+                    
+                    elseif obj:IsA("RemoteFunction") then
+                        local originalInvoke = obj.InvokeServer
+                        originalRemoteFunctions[obj] = originalInvoke
+                        
+                        obj.InvokeServer = function(self, ...)
+                            local args = {...}
+                            
+                            if repairBoostEnabled then
+                                local boostMultiplier = repairBoostValues[repairBoostLevel] or 1
+                                
+                                -- Aplicar boost al personaje antes de invocar
+                                applyRepairBoostToCharacter()
+                                
+                                -- Para InvokeServer, normalmente devuelve un valor
+                                local result = originalInvoke(self, ...)
+                                
+                                -- Si el resultado es un número (progreso), multiplicarlo
+                                if type(result) == "number" then
+                                    return result * boostMultiplier
+                                elseif type(result) == "table" then
+                                    local modifiedResult = {}
+                                    for k, v in pairs(result) do
+                                        if (k:lower() == "progress" or k:lower() == "amount") and 
+                                           type(v) == "number" then
+                                            modifiedResult[k] = v * boostMultiplier
+                                        else
+                                            modifiedResult[k] = v
+                                        end
+                                    end
+                                    return modifiedResult
+                                end
+                                return result
+                            end
+                            
+                            return originalInvoke(self, ...)
+                        end
+                    end
+                end
+            end
+        end
+    end
+end
+
+-- Función para aplicar boost a generadores existentes
+local function applyBoostToExistingGenerators()
+    if not repairBoostEnabled then return end
+    
+    local boostMultiplier = repairBoostValues[repairBoostLevel] or 1
+    
+    for _, generator in ipairs(workspace:GetDescendants()) do
+        if generator:IsA("Model") and (generator.Name:lower():find("generator") or 
+           generator.Name:lower():find("gen_") or generator.Name:lower():find("machine")) then
+            
+            pcall(function()
+                -- Solo aplicar si el jugador está interactuando con este generador
+                local isInteracting = false
+                for _, player in ipairs(Players:GetPlayers()) do
+                    if player == LP then
+                        local char = player.Character
+                        if char then
+                            local rootPart = char:FindFirstChild("HumanoidRootPart")
+                            if rootPart and (rootPart.Position - generator.Position).Magnitude < 15 then
+                                isInteracting = true
+                                break
+                            end
+                        end
+                    end
+                end
+                
+                if isInteracting then
+                    -- Atributos en minúsculas
+                    generator:SetAttribute("repairboost", repairBoostLevel)  -- minúscula
+                    generator:SetAttribute("gp_applied_by", LP.UserId)      -- minúscula
+                    
+                    -- GroupProject con mayúsculas
+                    local currentGroup = generator:GetAttribute("GroupProject") or 0
+                    if currentGroup < 1 then
+                        generator:SetAttribute("GroupProject", 1)
+                    end
+                    
+                    -- Aumentar progreso automáticamente (más lento para evitar detección)
+                    local currentProgress = generator:GetAttribute("Progress") or 
+                                          generator:GetAttribute("progress") or 0
+                    if type(currentProgress) == "number" and currentProgress < 100 then
+                        local increment = 0.1 * boostMultiplier  -- Más pequeño para evitar detección
+                        generator:SetAttribute("Progress", math.min(100, currentProgress + increment))
+                        generator:SetAttribute("progress", math.min(100, currentProgress + increment))
+                    end
+                end
+            end)
+        end
+    end
+end
+
+-- Función para monitorear nuevos generadores
+local function monitorNewGenerators()
+    workspace.DescendantAdded:Connect(function(descendant)
+        if descendant:IsA("Model") and (descendant.Name:lower():find("generator") or 
+           descendant.Name:lower():find("gen_")) and repairBoostEnabled then
+            task.wait(0.5)
+            applyBoostToExistingGenerators()
+        end
+    end)
+end
+
+-- Función para iniciar el mantenimiento constante
+local function startRepairBoostMaintenance()
+    -- Detener conexión anterior si existe
+    if repairMaintenanceConnection then
+        repairMaintenanceConnection:Disconnect()
+        repairMaintenanceConnection = nil
     end
     
-    isRepairBoostActive = false
+    -- Iniciar nueva conexión de mantenimiento
+    repairMaintenanceConnection = RunService.Heartbeat:Connect(function()
+        maintainRepairBoost()
+    end)
     
-    -- Limpiar atributos
-    local char = LP.Character
-    if char then
+    -- Aplicar boost inmediatamente
+    applyRepairBoostToCharacter()
+    applyBoostToExistingGenerators()
+end
+
+-- Función para limpiar atributos al desactivar
+local function cleanupBoostAttributes()
+    -- Detener conexiones de mantenimiento
+    if repairMaintenanceConnection then
+        repairMaintenanceConnection:Disconnect()
+        repairMaintenanceConnection = nil
+    end
+    
+    -- Limpiar atributos del personaje
+    if LP.Character then
         pcall(function()
-            char:SetAttribute("repairboost", nil)
-            char:SetAttribute("gp_applied_by", nil)
-            char:SetAttribute("GroupProject", nil)
+            LP.Character:SetAttribute("repairboost", nil)
+            LP.Character:SetAttribute("gp_applied_by", nil)
+            LP.Character:SetAttribute("GroupProject", nil)
         end)
     end
     
-    -- Restaurar remotes
-    for obj, originalFunc in pairs(originalRemoteFunctions) do
-        if obj:IsA("RemoteEvent") then
-            obj.FireServer = originalFunc
-        elseif obj:IsA("RemoteFunction") then
-            obj.InvokeServer = originalFunc
+    -- Limpiar atributos de generadores que aplicamos
+    for _, generator in ipairs(workspace:GetDescendants()) do
+        if generator:IsA("Model") and generator:GetAttribute("gp_applied_by") == LP.UserId then
+            pcall(function()
+                generator:SetAttribute("repairboost", nil)
+                generator:SetAttribute("gp_applied_by", nil)
+                
+                -- Si solo éramos nosotros reparando, quitar GroupProject
+                if generator:GetAttribute("GroupProject") == 1 then
+                    generator:SetAttribute("GroupProject", nil)
+                end
+            end)
+        end
+    end
+    
+    -- Restaurar remotes interceptados
+    for obj, _ in pairs(interceptedRemotes) do
+        if originalRemoteFunctions[obj] then
+            if obj:IsA("RemoteEvent") then
+                obj.FireServer = originalRemoteFunctions[obj]
+            elseif obj:IsA("RemoteFunction") then
+                obj.InvokeServer = originalRemoteFunctions[obj]
+            end
         end
     end
     originalRemoteFunctions = {}
     interceptedRemotes = {}
 end
 
--- Sección Generator Boost
-SurvivorTab:CreateSection("Generator Boost")
+-- Sección Repair Boost
+SurvivorTab:CreateSection("Repair Boost")
 
 SurvivorTab:CreateToggle({
-    Name = "Generator Boost",
+    Name = "Repair Boost",
     CurrentValue = false,
-    Flag = "GeneratorBoostToggle",
+    Flag = "RepairBoostToggle",
     Callback = function(v)
         repairBoostEnabled = v
         
         if v then
-            cleanupRepairBoost()
-            maintainRepairBoost()
+            -- Limpiar primero
+            cleanupBoostAttributes()
+            
+            -- Interceptar remotes
+            interceptRepairRemotes()
+            
+            -- Iniciar mantenimiento constante
+            startRepairBoostMaintenance()
+            
+            -- Monitorear nuevos generadores
+            monitorNewGenerators()
             
             -- Reconectar cuando cambie el personaje
             LP.CharacterAdded:Connect(function()
-                task.wait(0.5)
+                task.wait(1)
                 if repairBoostEnabled then
-                    maintainRepairBoost()
+                    startRepairBoostMaintenance()
                 end
             end)
             
-            local boostPercent = repairBoostValues[repairBoostLevel] or 0.10
             Rayfield:Notify({
-                Title = "Generator Boost",
-                Content = string.format("✅ Activado - Nivel %d: +%.0f%%", repairBoostLevel, boostPercent * 100),
+                Title = "Repair Boost",
+                Content = string.format("✅ Activado (Nivel %d: +%d%%)", repairBoostLevel, (repairBoostLevel-1)*10),
                 Duration = 3
             })
             
         else
-            cleanupRepairBoost()
+            -- Desactivar
+            cleanupBoostAttributes()
             
             Rayfield:Notify({
-                Title = "Generator Boost",
+                Title = "Repair Boost",
                 Content = "❌ Desactivado",
                 Duration = 3
             })
@@ -1190,32 +1345,24 @@ SurvivorTab:CreateToggle({
     end
 })
 
+-- Slider para niveles del repair boost
 SurvivorTab:CreateSlider({
-    Name = "Nivel Generator Boost",
-    Range = {1, 10},
+    Name = "Nivel Repair Boost",
+    Range = {1, 5},
     Increment = 1,
-    Suffix = " (1=+10%, 2=+20%, 3=+30%, 4=+40%, 5=+50%, 6=+60%, 7=+70%, 8=+80%, 9=+90%, 10=+100%)",
+    Suffix = " (+10% por nivel)",
     CurrentValue = repairBoostLevel,
-    Flag = "GeneratorBoostLevel",
+    Flag = "RepairBoostLevel",
     Callback = function(v)
         repairBoostLevel = math.floor(v)
         
-        local boostPercent = repairBoostValues[repairBoostLevel] or 0.10
-        
         if repairBoostEnabled then
-            lastAppliedBoost = 0
-            applyRepairBoostToCharacter()
-            interceptRepairRemotes()
+            -- Forzar reaplicación del boost con nuevo nivel
+            lastBoostTime = 0  -- Resetear para forzar reaplicación
             
             Rayfield:Notify({
-                Title = "Generator Boost",
-                Content = string.format("📊 Nivel %d: +%.0f%% de reparación", repairBoostLevel, boostPercent * 100),
-                Duration = 2
-            })
-        else
-            Rayfield:Notify({
-                Title = "Generator Boost",
-                Content = string.format("📊 Nivel %d configurado: +%.0f%%", repairBoostLevel, boostPercent * 100),
+                Title = "Repair Boost",
+                Content = string.format("📊 Nivel %d: +%d%% de reparación", repairBoostLevel, (repairBoostLevel-1)*10),
                 Duration = 2
             })
         end
@@ -2529,7 +2676,7 @@ KillerTab:CreateToggle({
 local hitboxExpanderEnabled = false
 local hitboxSize = 15
 local hitboxTransparency = 0.6
-local hitboxColor = Color3.fromRGB(0, 255, 0)  -- Verde en vez de rojo
+local hitboxColor = Color3.fromRGB(0, 255, 0)
 local originalSizes = {}
 local hitboxConnections = {}
 local damageRemote = nil

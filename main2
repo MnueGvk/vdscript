@@ -911,24 +911,6 @@ SurvivorTab:CreateSlider({
             -- Calcular porcentaje para mostrar
             local boostMultiplier = speedBoostValues[speedBoostLevel] or 1.05
             local showPercent = (boostMultiplier - 1.0) * 100 * 10
-            
-            Rayfield:Notify({
-                Title = "Speed Boost",
-                Content = string.format("📊 Nivel %d: +%.0f%% de velocidad", 
-                    speedBoostLevel, showPercent),
-                Duration = 2
-            })
-        else
-            -- Solo mostrar notificación de configuración
-            local boostMultiplier = speedBoostValues[speedBoostLevel] or 1.05
-            local showPercent = (boostMultiplier - 1.0) * 100 * 10
-            
-            Rayfield:Notify({
-                Title = "Speed Boost",
-                Content = string.format("📊 Nivel %d configurado: +%.0f%%", 
-                    speedBoostLevel, showPercent),
-                Duration = 2
-            })
         end
     end
 })

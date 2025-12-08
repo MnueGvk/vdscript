@@ -970,14 +970,11 @@ SurvivorTab:CreateButton({
 -- ============================================
 
 local repairBoostEnabled = false
-local repairBoostLevel = 1
-local repairBoostValues = {1, 1.1, 1.2, 1.3, 1.4, 1.5}
+local repairBoostLevel = 1  -- Nivel 1-5
+local repairBoostValues = {1, 1.1, 1.2, 1.3, 1.4}  -- 10% por nivel
 local repairBoostConnection = nil
-local repairMaintenanceConnection = nil
 local originalRemoteFunctions = {}
 local interceptedRemotes = {}
-local lastBoostTime = 0
-local boostCheckInterval = 0.3
 
 -- Función para aplicar atributos al personaje
 local function applyRepairBoostToCharacter()
@@ -1001,62 +998,7 @@ local function applyRepairBoostToCharacter()
         else
             LP.Character:SetAttribute("GroupProject", 1)  -- con mayúsculas
         end
-        lastBoostTime = tick()  -- Actualizar tiempo del último boost
     end)
-end
-
--- NUEVA: Función para mantener los atributos constantemente
-local function maintainRepairBoost()
-    if not repairBoostEnabled then return end
-    
-    local currentTime = tick()
-    
-    -- Verificar si los atributos siguen activos en el personaje
-    if LP.Character then
-        pcall(function()
-            local currentBoost = LP.Character:GetAttribute("repairboost")
-            local currentApplier = LP.Character:GetAttribute("gp_applied_by")
-            local currentGroup = LP.Character:GetAttribute("GroupProject")
-            
-            -- Si faltan atributos o han pasado más de 0.5 segundos, reaplicar
-            if not currentBoost or not currentApplier or not currentGroup or 
-               (currentTime - lastBoostTime) > 0.5 then
-                applyRepairBoostToCharacter()
-            end
-        end)
-    end
-    
-    -- También verificar y mantener atributos en generadores cercanos
-    for _, generator in ipairs(workspace:GetDescendants()) do  -- USAR workspace en minúscula
-        if generator:IsA("Model") and (generator.Name:lower():find("generator") or 
-           generator.Name:lower():find("gen_") or generator.Name:lower():find("machine")) then
-            
-            local char = LP.Character
-            if char then
-                local rootPart = char:FindFirstChild("HumanoidRootPart")
-                if rootPart and (rootPart.Position - generator.Position).Magnitude < 15 then
-                    pcall(function()
-                        local generatorBoost = generator:GetAttribute("repairboost")
-                        local generatorApplier = generator:GetAttribute("gp_applied_by")
-                        local generatorGroup = generator:GetAttribute("GroupProject")
-                        
-                        -- Si faltan atributos o el applier no es nosotros, reaplicar
-                        if not generatorBoost or generatorApplier ~= LP.UserId or not generatorGroup then
-                            local boostMultiplier = repairBoostValues[repairBoostLevel] or 1
-                            
-                            generator:SetAttribute("repairboost", repairBoostLevel)  -- minúscula
-                            generator:SetAttribute("gp_applied_by", LP.UserId)      -- minúscula
-                            
-                            local currentGroup = generator:GetAttribute("GroupProject") or 0
-                            if currentGroup < 1 then
-                                generator:SetAttribute("GroupProject", 1)
-                            end
-                        end
-                    end)
-                end
-            end
-        end
-    end
 end
 
 -- Función para interceptar remotes de reparación
@@ -1079,9 +1021,6 @@ local function interceptRepairRemotes()
                             
                             if repairBoostEnabled then
                                 local boostMultiplier = repairBoostValues[repairBoostLevel] or 1
-                                
-                                -- Aplicar boost al personaje antes de enviar
-                                applyRepairBoostToCharacter()
                                 
                                 -- Modificar argumentos de progreso
                                 for i, arg in ipairs(args) do
@@ -1137,9 +1076,6 @@ local function interceptRepairRemotes()
                             if repairBoostEnabled then
                                 local boostMultiplier = repairBoostValues[repairBoostLevel] or 1
                                 
-                                -- Aplicar boost al personaje antes de invocar
-                                applyRepairBoostToCharacter()
-                                
                                 -- Para InvokeServer, normalmente devuelve un valor
                                 local result = originalInvoke(self, ...)
                                 
@@ -1176,7 +1112,7 @@ local function applyBoostToExistingGenerators()
     
     local boostMultiplier = repairBoostValues[repairBoostLevel] or 1
     
-    for _, generator in ipairs(workspace:GetDescendants()) do  -- USAR workspace en minúscula
+    for _, generator in ipairs(workspace:GetDescendants()) do
         if generator:IsA("Model") and (generator.Name:lower():find("generator") or 
            generator.Name:lower():find("gen_") or generator.Name:lower():find("machine")) then
             
@@ -1188,7 +1124,7 @@ local function applyBoostToExistingGenerators()
                         local char = player.Character
                         if char then
                             local rootPart = char:FindFirstChild("HumanoidRootPart")
-                            if rootPart and (rootPart.Position - generator.Position).Magnitude < 15 then
+                            if rootPart and (rootPart.Position - generator.Position).Magnitude < 10 then
                                 isInteracting = true
                                 break
                             end
@@ -1207,11 +1143,11 @@ local function applyBoostToExistingGenerators()
                         generator:SetAttribute("GroupProject", 1)
                     end
                     
-                    -- Aumentar progreso automáticamente (más lento para evitar detección)
+                    -- Aumentar progreso automáticamente
                     local currentProgress = generator:GetAttribute("Progress") or 
                                           generator:GetAttribute("progress") or 0
                     if type(currentProgress) == "number" and currentProgress < 100 then
-                        local increment = 0.1 * boostMultiplier  -- Más pequeño para evitar detección
+                        local increment = 0.2 * boostMultiplier
                         generator:SetAttribute("Progress", math.min(100, currentProgress + increment))
                         generator:SetAttribute("progress", math.min(100, currentProgress + increment))
                     end
@@ -1223,41 +1159,17 @@ end
 
 -- Función para monitorear nuevos generadores
 local function monitorNewGenerators()
-    workspace.DescendantAdded:Connect(function(descendant)  -- USAR workspace en minúscula
+    workspace.DescendantAdded:Connect(function(descendant)
         if descendant:IsA("Model") and (descendant.Name:lower():find("generator") or 
            descendant.Name:lower():find("gen_")) and repairBoostEnabled then
-            task.wait(1.5)
+            task.wait(0.5)
             applyBoostToExistingGenerators()
         end
     end)
 end
 
--- Función para iniciar el mantenimiento constante
-local function startRepairBoostMaintenance()
-    -- Detener conexión anterior si existe
-    if repairMaintenanceConnection then
-        repairMaintenanceConnection:Disconnect()
-        repairMaintenanceConnection = nil
-    end
-    
-    -- Iniciar nueva conexión de mantenimiento
-    repairMaintenanceConnection = RunService.Heartbeat:Connect(function()
-        maintainRepairBoost()
-    end)
-    
-    -- Aplicar boost inmediatamente
-    applyRepairBoostToCharacter()
-    applyBoostToExistingGenerators()
-end
-
 -- Función para limpiar atributos al desactivar
 local function cleanupBoostAttributes()
-    -- Detener conexiones de mantenimiento
-    if repairMaintenanceConnection then
-        repairMaintenanceConnection:Disconnect()
-        repairMaintenanceConnection = nil
-    end
-    
     -- Limpiar atributos del personaje
     if LP.Character then
         pcall(function()
@@ -1268,7 +1180,7 @@ local function cleanupBoostAttributes()
     end
     
     -- Limpiar atributos de generadores que aplicamos
-    for _, generator in ipairs(workspace:GetDescendants()) do  -- USAR workspace en minúscula
+    for _, generator in ipairs(workspace:GetDescendants()) do
         if generator:IsA("Model") and generator:GetAttribute("gp_applied_by") == LP.UserId then
             pcall(function()
                 generator:SetAttribute("repairboost", nil)
@@ -1310,11 +1222,27 @@ SurvivorTab:CreateToggle({
             -- Limpiar primero
             cleanupBoostAttributes()
             
+            -- Aplicar al personaje
+            applyRepairBoostToCharacter()
+            
             -- Interceptar remotes
             interceptRepairRemotes()
             
-            -- Iniciar mantenimiento constante
-            startRepairBoostMaintenance()
+            -- Aplicar a generadores existentes
+            applyBoostToExistingGenerators()
+            
+            -- Configurar conexión Heartbeat
+            repairBoostConnection = RunService.Heartbeat:Connect(function(deltaTime)
+                if not repairBoostEnabled then return end
+                
+                applyRepairBoostToCharacter()
+                
+                -- Aplicar boost periódicamente (cada 0.5 segundos)
+                local currentTime = tick()
+                if currentTime % 0.5 < deltaTime then
+                    applyBoostToExistingGenerators()
+                end
+            end)
             
             -- Monitorear nuevos generadores
             monitorNewGenerators()
@@ -1323,30 +1251,34 @@ SurvivorTab:CreateToggle({
             LP.CharacterAdded:Connect(function()
                 task.wait(1)
                 if repairBoostEnabled then
-                    startRepairBoostMaintenance()
+                    applyRepairBoostToCharacter()
                 end
             end)
             
             Rayfield:Notify({
                 Title = "Repair Boost",
-                Content = string.format("✅ Activado (Nivel %d: +%d%%)", repairBoostLevel, (repairBoostLevel-1)*10),
+                Content = string.format("Activado (Nivel %d: +%d%%)", repairBoostLevel, (repairBoostLevel-1)*10),
                 Duration = 3
             })
             
         else
             -- Desactivar
+            if repairBoostConnection then
+                repairBoostConnection:Disconnect()
+                repairBoostConnection = nil
+            end
+            
             cleanupBoostAttributes()
             
             Rayfield:Notify({
                 Title = "Repair Boost",
-                Content = "❌ Desactivado",
+                Content = "Desactivado",
                 Duration = 3
             })
         end
     end
 })
 
--- Slider para niveles del repair boost
 SurvivorTab:CreateSlider({
     Name = "Nivel Repair Boost",
     Range = {1, 5},
@@ -1358,12 +1290,13 @@ SurvivorTab:CreateSlider({
         repairBoostLevel = math.floor(v)
         
         if repairBoostEnabled then
-            -- Forzar reaplicación del boost con nuevo nivel
-            lastBoostTime = 0  -- Resetear para forzar reaplicación
+            -- Actualizar atributos
+            applyRepairBoostToCharacter()
+            applyBoostToExistingGenerators()
             
             Rayfield:Notify({
                 Title = "Repair Boost",
-                Content = string.format("📊 Nivel %d: +%d%% de reparación", repairBoostLevel, (repairBoostLevel-1)*10),
+                Content = string.format("Nivel %d: +%d%% de reparación", repairBoostLevel, (repairBoostLevel-1)*10),
                 Duration = 2
             })
         end

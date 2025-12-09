@@ -914,7 +914,7 @@ local function applyRepairBoostToCharacter()
     pcall(function()
         LP.Character:SetAttribute("repairboost", boostMultiplier)
         LP.Character:SetAttribute("gp_applied_by", LP.UserId)
-        LP.Character:SetAttribute("GroupProject", 1)
+        LP.Character:SetAttribute("GroupProject", 2) --1
     end)
     
     lastAppliedBoost = repairBoostLevel
@@ -1015,7 +1015,7 @@ local function increaseGeneratorProgress()
                                           generator:GetAttribute("progress") or 0
                     
                     if type(currentProgress) == "number" and currentProgress < 100 then
-                        local increment = 3.0 * boostMultiplier
+                        local increment = 10.0 * boostMultiplier --3.0
                         local newProgress = math.min(100, currentProgress + increment)
                         
                         generator:SetAttribute("Progress", newProgress)
@@ -1111,7 +1111,7 @@ SurvivorTab:CreateToggle({
 
 SurvivorTab:CreateSlider({
     Name = "Nivel Generator Boost",
-    Range = {1, 12},
+    Range = {1, 11},
     Increment = 1,
     CurrentValue = repairBoostLevel,
     Flag = "GeneratorBoostLevel",

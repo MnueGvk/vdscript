@@ -903,18 +903,18 @@ local isRepairBoostActive = false
 local lastAppliedBoost = 0
 local repairMaintenanceConnection = nil
 local lastGeneratorUpdate = 0
-local GENERATOR_UPDATE_INTERVAL = 0.8
+local GENERATOR_UPDATE_INTERVAL = 0.3
 
 -- Función para aplicar atributos
 local function applyRepairBoostToCharacter()
     if not repairBoostEnabled or not LP.Character then return end
     
-    local boostMultiplier = repairBoostValues[repairBoostLevel] or 1.50 --1.05
+    local boostMultiplier = repairBoostValues[repairBoostLevel] or 1.50
     
     pcall(function()
         LP.Character:SetAttribute("repairboost", boostMultiplier)
         LP.Character:SetAttribute("gp_applied_by", LP.UserId)
-        LP.Character:SetAttribute("GroupProject", 4) --1
+        LP.Character:SetAttribute("GroupProject", 3)
     end)
     
     lastAppliedBoost = repairBoostLevel
@@ -954,7 +954,7 @@ local function interceptRepairRemotes()
             repairEvent.OnClientEvent = function(...)
                 if repairBoostEnabled then
                     local args = {...}
-                    local boostMultiplier = repairBoostValues[repairBoostLevel] or 1.50 --1.05
+                    local boostMultiplier = repairBoostValues[repairBoostLevel] or 1.50
                     
                     if #args >= 2 then
                         local generator = args[1]
@@ -986,7 +986,7 @@ local function increaseGeneratorProgress()
     if currentTime - lastGeneratorUpdate < GENERATOR_UPDATE_INTERVAL then return end
     lastGeneratorUpdate = currentTime
     
-    local boostMultiplier = repairBoostValues[repairBoostLevel] or 1.50 --1.05
+    local boostMultiplier = repairBoostValues[repairBoostLevel] or 1.50
     local char = LP.Character
     if not char then return end
     
@@ -1015,7 +1015,7 @@ local function increaseGeneratorProgress()
                                           generator:GetAttribute("progress") or 0
                     
                     if type(currentProgress) == "number" and currentProgress < 100 then
-                        local increment = 50 * boostMultiplier --3.0
+                        local increment = 90 * boostMultiplier
                         local newProgress = math.min(100, currentProgress + increment)
                         
                         generator:SetAttribute("Progress", newProgress)

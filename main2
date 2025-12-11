@@ -919,299 +919,311 @@ SurvivorTab:CreateSlider({
 -- GENERATOR BOOST
 -- ============================================
 
--- Configuración REAL
+-- Configuración
 local repairBoostEnabled = false
 local repairBoostLevel = 1
-local repairBoostValues = {1.5, 2.0, 3.0, 5.0, 10.0, 15.0,}
+local repairBoostValues = {5.0, 7.0, 10.0, 15.0, 25.0}  -- Valores reales
 
--- Sistema de simulación avanzado
-local fakePlayerSimulation = {
-    active = false,
-    userId = nil,
-    character = nil,
-    position = nil,
-    lastUpdate = 0
-}
+-- Variables del sistema REAL
+local currentGenerator = nil
+local repairLoop = nil
 
--- Obtener survivor REAL que esté vivo y cerca
-local function getValidSurvivorForSimulation()
-    local survivors = {}
+-- ============ SISTEMA REAL DE DETECCIÓN ============
+
+local function findRealRepairSystem()
+    print("[DEBUG] Buscando sistema de reparación REAL...")
     
-    for _, player in ipairs(Players:GetPlayers()) do
-        if player ~= LP and player.Team and player.Team.Name:lower():find("survivor") then
-            -- Verificar que esté vivo y en partida
-            if player.Character and player.Character:FindFirstChild("Humanoid") then
-                local humanoid = player.Character.Humanoid
-                if humanoid.Health > 0 then
-                    -- Verificar distancia (no muy lejos)
-                    local myRoot = LP.Character and LP.Character:FindFirstChild("HumanoidRootPart")
-                    local theirRoot = player.Character:FindFirstChild("HumanoidRootPart")
-                    
-                    if myRoot and theirRoot then
-                        local distance = (myRoot.Position - theirRoot.Position).Magnitude
-                        if distance < 100 then
-                            table.insert(survivors, {
-                                player = player,
-                                userId = player.UserId,
-                                distance = distance
-                            })
-                        end
-                    end
-                end
+    -- Buscar el sistema CheckInterractable
+    local repairSystem = nil
+    local playerChar = LP.Character
+    
+    if playerChar then
+        -- Buscar en el personaje
+        for _, child in ipairs(playerChar:GetDescendants()) do
+            if child.Name == "CheckInterractable" or child.Name:lower():find("repair") then
+                print("[DEBUG] Sistema encontrado en personaje:", child:GetFullName())
+                repairSystem = child
             end
-        end
-    end
-    
-    -- Ordenar por cercanía
-    table.sort(survivors, function(a, b)
-        return a.distance < b.distance
-    end)
-    
-    return #survivors > 0 and survivors[1].userId or nil
-end
-
--- Crear simulación REAL de segundo reparador
-local function createFakeRepairerSimulation(generator)
-    if not generator then return nil end
-    
-    local now = tick()
-    
-    if fakePlayerSimulation.active and fakePlayerSimulation.character then
-
-        local genPart = generator.PrimaryPart
-        if genPart then
-
-            local offset = Vector3.new(3, 0, 0)  -- 3 studs de distancia
-            fakePlayerSimulation.position = genPart.Position + offset
-            
-            -- Actualizar atributos de posición en el generador
-            generator:SetAttribute("FakeRepairerPos", fakePlayerSimulation.position)
-            generator:SetAttribute("FakeRepairerActive", true)
-            generator:SetAttribute("FakeRepairerLastUpdate", now)
         end
         
-        return fakePlayerSimulation.userId
-    end
-    
-    -- Crear nueva simulación
-    local validSurvivorId = getValidSurvivorForSimulation()
-    if not validSurvivorId then
-
-        for _, player in ipairs(Players:GetPlayers()) do
-            if player ~= LP then
-                validSurvivorId = player.UserId
-                break
-            end
+        -- Buscar en Workspace (como viste)
+        local workspaceCheck = workspace:FindFirstChild(LP.Name .. ".CheckInterractable")
+        if workspaceCheck then
+            print("[DEBUG] Sistema encontrado en Workspace:", workspaceCheck:GetFullName())
+            repairSystem = workspaceCheck
         end
     end
     
-    fakePlayerSimulation = {
-        active = true,
-        userId = validSurvivorId or 999999,
-        character = "SimulatedCharacter",
-        position = generator.PrimaryPart and (generator.PrimaryPart.Position + Vector3.new(3, 0, 0)),
-        lastUpdate = now
-    }
-    
-    -- Establecer todos los atributos que el juego podría verificar
-    generator:SetAttribute("FakeRepairerId", fakePlayerSimulation.userId)
-    generator:SetAttribute("FakeRepairerPos", fakePlayerSimulation.position)
-    generator:SetAttribute("FakeRepairerActive", true)
-    generator:SetAttribute("FakeRepairerLastUpdate", now)
-    
-    -- Atributo crítico: Lista de reparadores ACTIVOS
-    local currentRepairers = generator:GetAttribute("ActiveRepairerList") or {}
-    if type(currentRepairers) == "table" then
-        currentRepairers[LP.UserId] = true
-        currentRepairers[fakePlayerSimulation.userId] = true
-        generator:SetAttribute("ActiveRepairerList", currentRepairers)
-    else
-        generator:SetAttribute("ActiveRepairerList", {
-            [LP.UserId] = true,
-            [fakePlayerSimulation.userId] = true
-        })
-    end
-    
-    return fakePlayerSimulation.userId
+    return repairSystem
 end
 
--- Sistema de boost
-local function applyRealGeneratorBoost()
+-- Función PRINCIPAL que usa el sistema REAL
+local function applyRealRepairBoost()
     if not repairBoostEnabled then return end
     
     local char = LP.Character
     if not char or not char:FindFirstChild("HumanoidRootPart") then return end
     
-    local root = char.HumanoidRootPart
-    
-    -- Buscar generador cercano
-    local nearestGenerator = nil
-    local nearestDistance = 20
+    -- 1. Encontrar generador cercano
+    local nearestGen = nil
+    local nearestDist = 20
     
     for _, obj in ipairs(workspace:GetDescendants()) do
-        if obj:IsA("Model") and (obj.Name:lower():find("generator") or obj:GetAttribute("IsGenerator") == true) then
+        if obj:IsA("Model") and (obj.Name:lower():find("generator") or obj.Name:lower():find("gen_")) then
             local genPart = obj.PrimaryPart or obj:FindFirstChildWhichIsA("BasePart")
             if genPart then
-                local distance = (root.Position - genPart.Position).Magnitude
-                if distance < nearestDistance then
-                    nearestDistance = distance
-                    nearestGenerator = obj
+                local distance = (char.HumanoidRootPart.Position - genPart.Position).Magnitude
+                if distance < nearestDist then
+                    nearestDist = distance
+                    nearestGen = obj
                 end
             end
         end
     end
     
-    if not nearestGenerator then return end
+    if not nearestGen then return end
+    currentGenerator = nearestGen
     
-    local fakePlayerId = createFakeRepairerSimulation(nearestGenerator)
+    -- 2. INTERCEPTAR EL SISTEMA REAL "CheckInterractable"
+    local repairSystem = findRealRepairSystem()
     
-    char:SetAttribute("GroupProject", 2)
-    char:SetAttribute("gp_applied_by", fakePlayerId)
-    char:SetAttribute("repairboost", repairBoostValues[repairBoostLevel])
-    char:SetAttribute("IsRepairing", true)
-    char:SetAttribute("RepairTarget", nearestGenerator.Name)
-    char:SetAttribute("RepairStartTime", tick())
-    
-    nearestGenerator:SetAttribute("ActiveRepairers", 2)
-    nearestGenerator:SetAttribute("RepairSpeedMultiplier", repairBoostValues[repairBoostLevel])
-    nearestGenerator:SetAttribute("LastRepairUpdate", tick())
-    nearestGenerator:SetAttribute("Repairer1", LP.UserId)
-    nearestGenerator:SetAttribute("Repairer2", fakePlayerId)
-    
-    local currentProgress = nearestGenerator:GetAttribute("Progress") or 
-                           nearestGenerator:GetAttribute("progress") or 
-                           nearestGenerator:GetAttribute("CurrentProgress") or 0
-    
-    -- Normalizar a 0-100
-    if currentProgress <= 1 then
-        currentProgress = currentProgress * 100
+    if repairSystem then
+        -- 🔥 CLAVE: Forzar el estado de reparación
+        repairSystem.isRepairing = true
+        
+        -- También en Workspace (como viste)
+        local workspacePath = workspace:FindFirstChild(LP.Name .. ".CheckInterractable")
+        if workspacePath then
+            workspacePath.isRepairing = true
+        end
+        
+        -- 3. SIMULAR SEGUNDO REPARADOR (para boost grupal)
+        simulateSecondRepairer(nearestGen)
+        
+        -- 4. MANIPULACIÓN DIRECTA DEL PROGRESO
+        forceGeneratorProgress(nearestGen)
+        
+        print("[REAL BOOST] Sistema interceptado - Reparando:", nearestGen.Name)
+    else
+        -- Sistema alternativo si no encuentra CheckInterractable
+        applyAlternativeRepair(nearestGen)
+    end
+end
+
+-- Simular segundo reparador (para GroupProject)
+local function simulateSecondRepairer(generator)
+    -- Encontrar un survivor REAL en la partida
+    local realSurvivorId = nil
+    for _, player in ipairs(Players:GetPlayers()) do
+        if player ~= LP and player.Team and player.Team.Name:lower():find("survivor") then
+            if player.Character and player.Character:FindFirstChild("Humanoid") then
+                if player.Character.Humanoid.Health > 0 then
+                    realSurvivorId = player.UserId
+                    break
+                end
+            end
+        end
     end
     
-    if currentProgress < 100 then
-        local baseIncrement = 10.0 --10% por base
-        local levelBonus = (repairBoostLevel - 1) * 10  -- 0, 7.5, 15, 22.5, 30
-        local totalIncrement = baseIncrement + levelBonus
+    -- Usar atributos del sistema REAL del juego
+    generator:SetAttribute("Repairers", 2)
+    generator:SetAttribute("Repairer1", LP.UserId)
+    generator:SetAttribute("Repairer2", realSurvivorId or 999999)
+    generator:SetAttribute("IsBeingRepaired", true)
+    generator:SetAttribute("LastRepairUpdate", tick())
+    
+    -- También en el personaje
+    local char = LP.Character
+    if char then
+        char:SetAttribute("GroupProject", 2)
+        char:SetAttribute("gp_applied_by", realSurvivorId or 999999)
+        char:SetAttribute("repairboost", repairBoostValues[repairBoostLevel])
+        char:SetAttribute("IsRepairing", true)
+    end
+end
+
+-- Manipulación DIRECTA del progreso
+local function forceGeneratorProgress(generator)
+    local current = generator:GetAttribute("Progress") or 
+                   generator:GetAttribute("progress") or 
+                   generator:GetAttribute("CurrentProgress") or 0
+    
+    -- Normalizar
+    if current <= 1 then
+        current = current * 100
+    end
+    
+    if current < 100 then
+        -- INCREMENTO REAL (10-40% por tick)
+        local increment = 10 + ((repairBoostLevel - 1) * 7.5)  -- 10, 17.5, 25, 32.5, 40
+        local newProgress = math.min(100, current + increment)
         
-        local newProgress = math.min(100, currentProgress + totalIncrement)
+        -- Aplicar en TODOS los lugares posibles
+        generator:SetAttribute("Progress", newProgress)
+        generator:SetAttribute("progress", newProgress)
+        generator:SetAttribute("CurrentProgress", newProgress)
         
-        -- Aplicar progreso en TODOS los formatos posibles
-        nearestGenerator:SetAttribute("Progress", newProgress / 100)
-        nearestGenerator:SetAttribute("progress", newProgress / 100)
-        nearestGenerator:SetAttribute("CurrentProgress", newProgress)
-        nearestGenerator:SetAttribute("RepairValue", newProgress)
+        -- Si hay un valor visible (como RepairValue)
+        generator:SetAttribute("RepairValue", newProgress)
         
-        -- También modificar directamente si hay scripts de progreso
-        for _, script in ipairs(nearestGenerator:GetDescendants()) do
-            if script:IsA("Script") or script:IsA("ModuleScript") then
+        -- Buscar y modificar scripts directamente
+        for _, script in ipairs(generator:GetDescendants()) do
+            if script:IsA("Script") or script:IsA("LocalScript") then
                 pcall(function()
-                    -- Intentar modificar variables de progreso directamente
                     local env = getfenv(script)
-                    if env.progress then env.progress = newProgress / 100 end
-                    if env.Progress then env.Progress = newProgress / 100 end
+                    if env.progress then env.progress = newProgress end
+                    if env.Progress then env.Progress = newProgress end
                     if env.currentProgress then env.currentProgress = newProgress end
                 end)
             end
         end
-        
-        -- Efecto visual (opcional)
-        if nearestGenerator.PrimaryPart then
-            nearestGenerator.PrimaryPart.BrickColor = BrickColor.new("Bright green")
-            
-            -- Partículas de reparación rápida
-            local sparkles = Instance.new("Sparkles")
-            sparkles.SparkleColor = Color3.new(0, 1, 0)
-            sparkles.Parent = nearestGenerator.PrimaryPart
-            task.delay(0.5, function()
-                if sparkles then sparkles:Destroy() end
+    end
+end
+
+-- Sistema alternativo si no encuentra CheckInterractable
+local function applyAlternativeRepair(generator)
+    -- 1. Usar RemoteEvents si existen
+    for _, remote in ipairs(game:GetDescendants()) do
+        if remote:IsA("RemoteEvent") and remote.Name:lower():find("repair") then
+            pcall(function()
+                remote:FireServer(generator, "Repair", repairBoostValues[repairBoostLevel])
             end)
         end
     end
     
-    -- CAPA 4: Interceptar RemoteEvents de reparación (si existen)
-    for _, obj in ipairs(game:GetDescendants()) do
-        if obj:IsA("RemoteEvent") then
-            local nameLower = obj.Name:lower()
-            if nameLower:find("repair") or nameLower:find("generator") then
-                pcall(function()
-                    -- Enviar datos "fake" de reparación grupal
-                    obj:FireServer({
-                        type = "GroupRepair",
-                        generator = nearestGenerator,
-                        player1 = LP,
-                        player2 = fakePlayerId,
-                        speed = repairBoostValues[repairBoostLevel],
-                        progress = nearestGenerator:GetAttribute("Progress")
-                    })
-                end)
-            end
-        end
-    end
+    -- 2. Atributos directos en el generador
+    generator:SetAttribute("IsRepairing", true)
+    generator:SetAttribute("RepairSpeed", repairBoostValues[repairBoostLevel])
+    
+    -- 3. Forzar progreso igualmente
+    forceGeneratorProgress(generator)
 end
 
+-- ============ SISTEMA DE CONTROL ============
 
-local boostSystemActive = false
-local boostLoop = nil
-
-local function startRealBoostSystem()
-    if boostLoop then return end
+local function startRepairBoost()
+    if repairLoop then return end
     
-    boostLoop = RunService.Heartbeat:Connect(function()
-        pcall(applyRealGeneratorBoost)
+    repairLoop = RunService.Heartbeat:Connect(function()
+        pcall(applyRealRepairBoost)
     end)
     
-    boostSystemActive = true
+    print("[SYSTEM] Generator Boost REAL iniciado")
 end
 
-local function stopRealBoostSystem()
-    if boostLoop then
-        boostLoop:Disconnect()
-        boostLoop = nil
+local function stopRepairBoost()
+    if repairLoop then
+        repairLoop:Disconnect()
+        repairLoop = nil
     end
     
-    boostSystemActive = false
+    -- Limpiar el estado de reparación
+    local char = LP.Character
+    if char then
+        char:SetAttribute("IsRepairing", false)
+        char:SetAttribute("GroupProject", nil)
+    end
     
-    -- Limpiar todo
-    pcall(function()
-        local char = LP.Character
-        if char then
-            char:SetAttribute("GroupProject", nil)
-            char:SetAttribute("gp_applied_by", nil)
-            char:SetAttribute("repairboost", nil)
-            char:SetAttribute("IsRepairing", nil)
-        end
-    end)
+    -- Limpiar CheckInterractable si existe
+    local repairSystem = findRealRepairSystem()
+    if repairSystem then
+        repairSystem.isRepairing = false
+    end
     
-    fakePlayerSimulation.active = false
+    local workspacePath = workspace:FindFirstChild(LP.Name .. ".CheckInterractable")
+    if workspacePath then
+        workspacePath.isRepairing = false
+    end
+    
+    print("[SYSTEM] Generator Boost detenido")
 end
 
 SurvivorTab:CreateSection("Generator Boost")
 
 SurvivorTab:CreateToggle({
-    Name = "Generator Boost",
+    Name = "Generator Boost (CheckInterractable)",
     CurrentValue = false,
-    Flag = "RealGeneratorBoost",
+    Flag = "GenBoostV2",
     Callback = function(value)
         repairBoostEnabled = value
         
         if value then
-            task.spawn(function()
-                task.wait(0.3)
-            end)
+            -- Primero mostrar debug del sistema encontrado
+            local system = findRealRepairSystem()
+            if system then
+                print("[DEBUG] Sistema CheckInterractable encontrado:", system:GetFullName())
+                Rayfield:Notify({
+                    Title = "Generator Boost V2",
+                    Content = "Sistema REAL encontrado. Activando boost...",
+                    Duration = 3
+                })
+            else
+                print("[DEBUG] Usando sistema alternativo")
+                Rayfield:Notify({
+                    Title = "Generator Boost V2",
+                    Content = "Usando sistema alternativo",
+                    Duration = 3
+                })
+            end
+            
+            -- Iniciar sistema
+            task.wait(0.5)
+            startRepairBoost()
+            
         else
-            stopRealBoostSystem()
+            stopRepairBoost()
         end
     end
 })
 
 SurvivorTab:CreateSlider({
-    Name = "Nivel de Velocidad",
-    Range = {1, 6},
-    Increment = 1,  
+    Name = "Velocidad de Reparación",
+    Range = {1, 5},
+    Increment = 1,
     CurrentValue = 1,
-    Flag = "RealBoostLevel",
+    Flag = "RepairSpeedV2",
     Callback = function(value)
-        local newLevel = math.floor(value)
-        repairBoostLevel = newLevel
+        repairBoostLevel = math.floor(value)
+        
+        local speed = repairBoostValues[repairBoostLevel]
+        print("[BOOST] Nivel ajustado:", repairBoostLevel, "Velocidad:", speed .. "x")
+        
+        if repairBoostEnabled then
+            Rayfield:Notify({
+                Title = "Generator Boost",
+                Content = string.format("Nivel %d - %.1fx velocidad", repairBoostLevel, speed),
+                Duration = 2
+            })
+        end
+    end
+})
+
+SurvivorTab:CreateButton({
+    Name = "🔍 Ver Estado CheckInterractable",
+    Callback = function()
+        local system = findRealRepairSystem()
+        local workspacePath = workspace:FindFirstChild(LP.Name .. ".CheckInterractable")
+        
+        print("=== DIAGNÓSTICO CHECKINTERACTABLE ===")
+        if system then
+            print("✅ Sistema encontrado en:", system:GetFullName())
+            print("   isRepairing =", system.isRepairing)
+        else
+            print("❌ No se encontró en personaje")
+        end
+        
+        if workspacePath then
+            print("✅ En Workspace:", workspacePath:GetFullName())
+            print("   isRepairing =", workspacePath.isRepairing)
+        else
+            print("❌ No se encontró en Workspace")
+        end
+        
+        Rayfield:Notify({
+            Title = "Diagnóstico",
+            Content = system and "Sistema encontrado" or "No se encontró sistema",
+            Duration = 3
+        })
     end
 })
 

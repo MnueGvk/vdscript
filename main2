@@ -974,7 +974,7 @@ local function applyRealRepairBoost()
                     
                     if currentProgress < 100 then
                         -- Incremento con boost
-                        local increment = 10.0 * repairSpeedMultiplier
+                        local increment = 3.0 * repairSpeedMultiplier
                         local newProgress = math.min(100, currentProgress + increment)
                         
                         -- Aplicar progreso
@@ -1017,7 +1017,7 @@ local function startRepairBoost()
     
     repairMainConnection = RunService.Heartbeat:Connect(function()
         if repairBoostEnabled then
-            if tick() % 0.2 < 0.05 then
+            if tick() % 0.5 < 0.10 then
                 applyRealRepairBoost()
             end
         end

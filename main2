@@ -916,255 +916,148 @@ SurvivorTab:CreateSlider({
 })
 
 -- ============================================
--- GROUP PROJECT PERK
+-- GENERATOR BOOST SIMPLE
 -- ============================================
 
--- Configuración
-local groupProjectEnabled = false
-local perkLevel = 1
-local groupProjectValues = {
-    [1] = 1.05,
-    [2] = 1.07,
-    [3] = 1.10,
-    [4] = 1.15,
-    [5] = 1.20
-}
+local boostEnabled = false
+local boostLevel = 1
+local boostValues = {100.00, 250.00, 500.00, 1000.00, 5000.00}
 
-local simulatedGroup = {
-    size = 3,
-    members = {},
-    active = false
-}
+-- Sistema simple
+local boostLoop = nil
+local hookedRemotes = {}
 
--- ============ SISTEMA DE SIMULACIÓN ESPECÍFICA ============
+-- Interceptar solo reparación
+local function hookRepairRemotes()
+    for _, obj in ipairs(game:GetDescendants()) do
+        if obj:IsA("RemoteEvent") or obj:IsA("RemoteFunction") then
+            local name = obj.Name:lower()
+            
+            -- Solo reparación, no skillchecks
+            if (name:find("repair") or name:find("generator") or name:find("fix")) and
+               not name:find("skill") and not name:find("check") then
+                
+                if not hookedRemotes[obj] then
+                    if obj:IsA("RemoteEvent") then
+                        local old = obj.FireServer
+                        obj.FireServer = function(self, ...)
+                            if boostEnabled then
+                                return true
+                            end
+                            return old(self, ...)
+                        end
+                    else
+                        local old = obj.InvokeServer
+                        obj.InvokeServer = function(self, ...)
+                            if boostEnabled then
+                                return true, 100
+                            end
+                            return old(self, ...)
+                        end
+                    end
+                    hookedRemotes[obj] = true
+                end
+            end
+        end
+    end
+end
 
-local function simulateGroupProjectPerk()
-    if not groupProjectEnabled then return end
+-- Aplicar boost
+local function applyBoost()
+    if not boostEnabled then return end
     
     local char = LP.Character
     if not char then return end
     
-    local realMembers = {}
-    local memberCount = 0
-    
-    for _, player in ipairs(Players:GetPlayers()) do
-        if player ~= LP and memberCount < 2 then
-            if player.Character and player.Character:FindFirstChild("Humanoid") then
-                if player.Character.Humanoid.Health > 0 then
-                    table.insert(realMembers, player.UserId)
-                    memberCount = memberCount + 1
-                end
-            end
-        end
-    end
-    
-    while #realMembers < 2 do
-        table.insert(realMembers, 999000 + #realMembers)
-    end
-    
+    -- Atributos básicos
     char:SetAttribute("GroupProject", 3)
+    char:SetAttribute("gp_applied_by", "999999")
+    char:SetAttribute("repairboost", boostValues[boostLevel])
     
-    char:SetAttribute("gp_applied_by", table.concat(realMembers, ","))
-    
-    local boostPerSurvivor = groupProjectValues[perkLevel]
-    local totalBoost = 1.0 + ((boostPerSurvivor - 1.0) * 2)
-    char:SetAttribute("repairboost", totalBoost)
-    
-    char:SetAttribute("HasGroupProject", true)
-    char:SetAttribute("GroupSize", 3)
-    char:SetAttribute("CoopRepairBonus", boostPerSurvivor - 1.0)
-    
-    simulatedGroup = {
-        size = 3,
-        members = realMembers,
-        active = true
-    }
-    
-    return realMembers, totalBoost
-end
-
--- Función PRINCIPAL con manipulación de progreso ESPECÍFICA
-local function applyGroupProjectBoost()
-    if not groupProjectEnabled then return end
-    
-    -- 1. Activar la perk
-    local groupMembers, totalBoost = simulateGroupProjectPerk()
-    
-    -- 2. Buscar generador cercano
-    local char = LP.Character
-    if not char or not char:FindFirstChild("HumanoidRootPart") then return end
-    
-    local root = char.HumanoidRootPart
-    local generator = findGeneratorNear(root.Position, 20)
-    
-    if not generator then return end
-    
-    -- 3. Aplicar atributos AL GENERADOR (para que el servidor lo vea)
-    generator:SetAttribute("RepairGroupSize", 3)
-    generator:SetAttribute("RepairGroupMembers", groupMembers)
-    generator:SetAttribute("GroupProjectActive", true)
-    generator:SetAttribute("RepairSpeedMultiplier", totalBoost)
-    
-    local progress = generator:GetAttribute("Progress") or 
-                    generator:GetAttribute("progress") or 
-                    generator:GetAttribute("CurrentProgress") or 0
-    
-    if progress <= 1 then
-        progress = progress * 100
-    end
-    
-    if progress < 100 then
+    -- Buscar y reparar generadores
+    if char:FindFirstChild("HumanoidRootPart") then
+        local root = char.HumanoidRootPart
         
-        local bonusPerSurvivor = (groupProjectValues[perkLevel] - 1.0) * 100  -- 5 a 20
-        local totalBonus = bonusPerSurvivor * 2  -- 10 a 40
-        
-        -- Incremento base del juego (digamos 1%) + bonus de la perk
-        local baseIncrement = 1.0  -- 1% por tick normal
-        local perkIncrement = baseIncrement * (totalBonus / 100)  -- +10% a +40%
-        local totalIncrement = baseIncrement + perkIncrement  -- 1.1% a 1.4%
-        
-        local newProgress = math.min(100, progress + totalIncrement)
-        
-        -- Aplicar
-        generator:SetAttribute("Progress", newProgress)
-        generator:SetAttribute("progress", newProgress)
-        generator:SetAttribute("CurrentProgress", newProgress)
-        
-        -- Debug cada 2 segundos
-        if tick() % 2 < 0.1 then
-            print(string.format("[GROUP PROJECT] Progreso: %.1f%% (+%.2f%%) | Boost: %.2fx | Nivel: %d", 
-                newProgress, totalIncrement, totalBoost, perkLevel))
-        end
-        
-        -- Efecto visual cuando está cerca de completar
-        if newProgress > 90 and generator.PrimaryPart then
-            generator.PrimaryPart.BrickColor = BrickColor.new("Bright yellow")
-        end
-    end
-end
-
--- Función simple para encontrar generador
-local function findGeneratorNear(position, maxDistance)
-    for _, obj in ipairs(workspace:GetDescendants()) do
-        if obj:IsA("Model") and obj.Name:lower():find("generator") then
-            local genPart = obj.PrimaryPart or obj:FindFirstChildWhichIsA("BasePart")
-            if genPart then
-                local distance = (position - genPart.Position).Magnitude
-                if distance < maxDistance then
-                    return obj
+        for _, obj in ipairs(workspace:GetDescendants()) do
+            if obj:IsA("Model") and obj.Name:lower():find("generator") then
+                local part = obj.PrimaryPart or obj:FindFirstChildWhichIsA("BasePart")
+                if part then
+                    local dist = (root.Position - part.Position).Magnitude
+                    if dist < 30 then
+                        obj:SetAttribute("Progress", 100)
+                        obj:SetAttribute("progress", 100)
+                        break
+                    end
                 end
             end
         end
     end
-    return nil
 end
 
--- ============ SISTEMA DE CONTROL ============
-
-local groupProjectLoop = nil
-
-local function startGroupProjectSystem()
-    if groupProjectLoop then
-        groupProjectLoop:Disconnect()
-        groupProjectLoop = nil
-    end
+-- Control
+local function startBoost()
+    if boostLoop then return end
     
-    groupProjectLoop = RunService.Heartbeat:Connect(function()
-        pcall(applyGroupProjectBoost)
+    hookRepairRemotes()
+    
+    boostLoop = RunService.Heartbeat:Connect(function()
+        pcall(applyBoost)
     end)
-    
-    print("[GROUP PROJECT] Perk simulada - Activada")
 end
 
-local function stopGroupProjectSystem()
-    if groupProjectLoop then
-        groupProjectLoop:Disconnect()
-        groupProjectLoop = nil
+local function stopBoost()
+    if boostLoop then
+        boostLoop:Disconnect()
+        boostLoop = nil
     end
     
-    -- Limpiar atributos específicos de Group Project
+    for obj, _ in pairs(hookedRemotes) do
+        if obj and obj.Parent then
+            if obj:IsA("RemoteEvent") then
+                obj.FireServer = nil
+            else
+                obj.InvokeServer = nil
+            end
+        end
+    end
+    
+    hookedRemotes = {}
+    
     pcall(function()
         local char = LP.Character
         if char then
             char:SetAttribute("GroupProject", nil)
             char:SetAttribute("gp_applied_by", nil)
             char:SetAttribute("repairboost", nil)
-            char:SetAttribute("HasGroupProject", nil)
-            char:SetAttribute("GroupSize", nil)
-            char:SetAttribute("CoopRepairBonus", nil)
         end
     end)
-    
-    simulatedGroup.active = false
-    
-    print("[GROUP PROJECT] Perk simulada - Desactivada")
 end
 
--- ============================================
--- INTERFAZ ESPECÍFICA PARA GROUP PROJECT
--- ============================================
-
-SurvivorTab:CreateSection("GROUP PROJECT Perk")
+-- Interfaz
+SurvivorTab:CreateSection("Generator Boost")
 
 SurvivorTab:CreateToggle({
-    Name = "Group Project",
+    Name = "Generator Boost",
     CurrentValue = false,
-    Flag = "GroupProjectPerk",
-    Callback = function(value)
-        groupProjectEnabled = value
-        
-        if value then
-            startGroupProjectSystem()
-            
-            local boostValue = groupProjectValues[perkLevel]
-            local totalBoost = 1.0 + ((boostValue - 1.0) * 2)
-            
-            Rayfield:Notify({
-                Title = "Group Project Perk",
-                Content = string.format("✅ Activada\nSimulando grupo de 3\n%.1fx velocidad total (%.0f%% bonus)", 
-                    totalBoost, (totalBoost - 1.0) * 100),
-                Duration = 6
-            })
-            
-            -- Reconexión al cambiar personaje
-            LP.CharacterAdded:Connect(function()
-                if groupProjectEnabled then
-                    task.wait(2)
-                    startGroupProjectSystem()
-                end
-            end)
-            
+    Flag = "GenBoost",
+    Callback = function(v)
+        boostEnabled = v
+        if v then
+            startBoost()
         else
-            stopGroupProjectSystem()
+            stopBoost()
         end
     end
 })
 
 SurvivorTab:CreateSlider({
-    Name = "Nivel Perk",
+    Name = "Nivel",
     Range = {1, 5},
     Increment = 1,
     CurrentValue = 1,
-    Flag = "GroupProjectLevel",
-    Callback = function(value)
-        perkLevel = math.floor(value)
-        local boostPerSurvivor = groupProjectValues[perkLevel]
-        local totalBoost = 1.0 + ((boostPerSurvivor - 1.0) * 2)
-        
-        local bonusPercent = (boostPerSurvivor - 1.0) * 100
-        local totalBonus = bonusPercent * 2
-        
-        if groupProjectEnabled then
-            Rayfield:Notify({
-                Title = "Group Project Nivel " .. perkLevel,
-                Content = string.format("%.0f%% por survivor\n%.0f%% bonus total\n%.2fx velocidad", 
-                    bonusPercent, totalBonus, totalBoost),
-                Duration = 4
-            })
-        end
-        
-        print(string.format("[GROUP PROJECT] Nivel %d: %.0f%% por survivor = %.2fx total", 
-            perkLevel, bonusPercent, totalBoost))
+    Flag = "BoostLevel",
+    Callback = function(v)
+        boostLevel = math.floor(v)
     end
 })
 

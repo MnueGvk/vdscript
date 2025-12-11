@@ -940,6 +940,36 @@ local playerUserId = LP.UserId
 
 -- ============ FUNCIONES PRINCIPALES OPTIMIZADAS ============
 
+local function simulateServerProgress(generator, multiplier)
+    if not generator then return end
+    
+    -- Obtener progreso actual (probando diferentes nombres)
+    local progress = generator:GetAttribute("Progress") or 
+                    generator:GetAttribute("progress") or 
+                    generator:GetAttribute("CurrentProgress") or 0
+    
+    -- Normalizar a 0-100
+    if progress <= 1 then
+        progress = progress * 100
+    end
+    
+    if progress < 100 then
+        -- Incremento base del juego (ajustar según necesidad)
+        local baseIncrement = 2.0
+        local boostedIncrement = baseIncrement * multiplier
+        
+        local newProgress = math.min(100, progress + boostedIncrement)
+        
+        -- Establecer en TODOS los nombres posibles
+        generator:SetAttribute("Progress", newProgress)
+        generator:SetAttribute("progress", newProgress)
+        generator:SetAttribute("CurrentProgress", newProgress)
+        
+        -- También como valor numérico directo
+        generator:SetAttribute("RepairValue", newProgress)
+    end
+end
+
 -- Obtener survivor real (optimizado)
 local function getRandomSurvivorId()
     for _, player in ipairs(Players:GetPlayers()) do
@@ -1023,7 +1053,6 @@ local function applyBoostAttributes()
     generator:SetAttribute("ActiveRepairers", 2)
     generator:SetAttribute("RepairSpeedMultiplier", currentMultiplier)
     
-    -- Intentar simular el progreso REAL del servidor
     simulateServerProgress(generator, currentMultiplier)
     
     return true

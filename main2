@@ -1114,58 +1114,6 @@ local function stopBoostSystem()
     end)
 end
 
--- Sección Generator Boost
-SurvivorTab:CreateSection("Generator Boost")
-
-local boostToggle = SurvivorTab:CreateToggle({
-    Name = "Generator Boost",
-    CurrentValue = false,
-    Flag = "GeneratorBoostToggle",
-    Callback = function(value)
-        repairBoostEnabled = value
-        
-        if value then
-            -- Pequeño delay para evitar spam
-            task.spawn(function()
-                task.wait(0.2)
-                if repairBoostEnabled then
-                    startBoostSystem()
-                    -- Aplicar inmediatamente
-                    applyBoostAttributes()
-                end
-            end)
-        else
-            stopBoostSystem()
-        end
-    end
-})
-
-SurvivorTab:CreateSlider({
-    Name = "Nivel de Velocidad",
-    Range = {1, 5},
-    Increment = 1,  
-    CurrentValue = 1,
-    Flag = "GeneratorBoostLevel",
-    Callback = function(value)
-        local newLevel = math.floor(value)
-        repairBoostLevel = newLevel
-        
-        -- Actualizar inmediatamente si está activo
-        if repairBoostEnabled then
-            pcall(function()
-                local char = LP.Character
-                if char then
-                    char:SetAttribute("repairboost", repairBoostValues[newLevel])
-                end
-                
-                if lastGenerator then
-                    lastGenerator:SetAttribute("RepairSpeedMultiplier", repairBoostValues[newLevel])
-                end
-            end)
-        end
-    end
-})
-
 -- ============================================
 -- EJECUTANDO DETECCIÓN COMPLETA
 -- ============================================
@@ -1617,6 +1565,58 @@ end
 
 print("\n✅ ANÁLISIS COMPLETADO")
 print("   Usa el método #" .. bestMethod .. " para mejor resultados")
+
+-- Sección Generator Boost
+SurvivorTab:CreateSection("Generator Boost")
+
+local boostToggle = SurvivorTab:CreateToggle({
+    Name = "Generator Boost",
+    CurrentValue = false,
+    Flag = "GeneratorBoostToggle",
+    Callback = function(value)
+        repairBoostEnabled = value
+        
+        if value then
+            -- Pequeño delay para evitar spam
+            task.spawn(function()
+                task.wait(0.2)
+                if repairBoostEnabled then
+                    startBoostSystem()
+                    -- Aplicar inmediatamente
+                    applyBoostAttributes()
+                end
+            end)
+        else
+            stopBoostSystem()
+        end
+    end
+})
+
+SurvivorTab:CreateSlider({
+    Name = "Nivel de Velocidad",
+    Range = {1, 5},
+    Increment = 1,  
+    CurrentValue = 1,
+    Flag = "GeneratorBoostLevel",
+    Callback = function(value)
+        local newLevel = math.floor(value)
+        repairBoostLevel = newLevel
+        
+        -- Actualizar inmediatamente si está activo
+        if repairBoostEnabled then
+            pcall(function()
+                local char = LP.Character
+                if char then
+                    char:SetAttribute("repairboost", repairBoostValues[newLevel])
+                end
+                
+                if lastGenerator then
+                    lastGenerator:SetAttribute("RepairSpeedMultiplier", repairBoostValues[newLevel])
+                end
+            end)
+        end
+    end
+})
 
 -- ============================================
 -- 14. SISTEMA PERFECT SKILLCHECK (SURVIVOR TAB)

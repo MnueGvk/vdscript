@@ -919,57 +919,118 @@ SurvivorTab:CreateSlider({
 -- GENERATOR BOOST SIMPLE
 -- ============================================
 
+
 -- Configuración
 local repairBoostEnabled = false
 local repairBoostLevel = 1
-local repairSpeedMultiplier = 1.50
+local repairSpeedMultiplier = 1.05
 local repairBoostValues = {
-    [1] = 1.50,
-    [2] = 2.00,
-    [3] = 2.50,
-    [4] = 3.00,
-    [5] = 4.00,
-    [6] = 5.00,
-    [7] = 6.00,
-    [8] = 7.00,
-    [9] = 8.00,
-    [10] = 9.00,
-    [11] = 10.00
+    [1] = 1.05,
+    [2] = 1.10,
+    [3] = 1.15,
+    [4] = 1.20,
+    [5] = 1.25,
+    [6] = 1.30,
+    [7] = 1.35,
+    [8] = 1.40,
+    [9] = 1.45,
+    [10] = 1.50
 }
 
 -- Variables
 local repairMainConnection = nil
 local attributeMaintenanceConnection = nil
+local repairRemote = nil
+local originalFireServer = nil
+local lastRepairUpdate = 0
+local REPAIR_INTERVAL = 0.2
 
--- Obtener ID de survivor
-local function getSurvivorIdString()
+-- ============ ATRIBUTOS DEL PERSONAJE ============
+
+local function getSurvivorIdForGroup()
     for _, player in ipairs(Players:GetPlayers()) do
         if player ~= LP then
             local team = player.Team
             if team and team.Name:lower():find("survivor") then
-                return tostring(player.UserId)
+                return player.UserId
             end
         end
     end
-    return "999999"
+    return 999999
 end
 
--- Solo 3 atributos (sin arrays)
-local function maintainBoostAttributes()
+local function maintainCharacterAttributes()
     local char = LP.Character
     if not char then return end
     
-    local survivorIdStr = getSurvivorIdString()
+    local survivorId = getSurvivorIdForGroup()
     
-    -- SOLO 3 ATRIBUTOS:
+    -- LOS 3 ATRIBUTOS CLAVES:
     char:SetAttribute("GroupProject", 2)
-    char:SetAttribute("gp_applied_by", survivorIdStr)
+    char:SetAttribute("gp_applied_by", tostring(survivorId))
     char:SetAttribute("repairboost", repairSpeedMultiplier)
+    
+    -- Atributos extra que podrían ayudar
+    char:SetAttribute("IsRepairing", true)
+    char:SetAttribute("RepairSpeed", repairSpeedMultiplier)
 end
 
--- Aplicar boost directamente
-local function applyDirectRepairBoost()
+-- ============ INTERCEPTAR REMOTES ============
+
+local function findAndInterceptRemotes()
+    if repairRemote then return repairRemote end
+    
+    -- Buscar RemoteEvents de reparación
+    for _, obj in ipairs(ReplicatedStorage:GetDescendants()) do
+        if obj:IsA("RemoteEvent") then
+            local name = obj.Name:lower()
+            if name:find("repair") or name:find("generator") or name:find("progress") then
+                repairRemote = obj
+                
+                if not originalFireServer then
+                    originalFireServer = obj.FireServer
+                end
+                
+                -- Interceptar
+                obj.FireServer = function(self, ...)
+                    local args = {...}
+                    
+                    if repairBoostEnabled then
+                        -- Aplicar boost a números
+                        for i, arg in ipairs(args) do
+                            if type(arg) == "number" and arg > 0 and arg < 100 then
+                                args[i] = arg * repairSpeedMultiplier
+                            elseif type(arg) == "table" then
+                                -- Añadir nuestros atributos a la tabla
+                                arg.GroupProject = 2
+                                arg.gp_applied_by = getSurvivorIdForGroup()
+                                arg.repairboost = repairSpeedMultiplier
+                            end
+                        end
+                    end
+                    
+                    return originalFireServer(self, unpack(args))
+                end
+                
+                return repairRemote
+            end
+        end
+    end
+    
+    return nil
+end
+
+-- ============ APLICAR BOOST COMPLETO ============
+
+local function applyCompleteGeneratorBoost()
     if not repairBoostEnabled then return end
+    
+    local currentTime = tick()
+    if currentTime - lastRepairUpdate < REPAIR_INTERVAL then return end
+    lastRepairUpdate = currentTime
+    
+    -- 1. Mantener atributos del personaje
+    maintainCharacterAttributes()
     
     local char = LP.Character
     if not char then return end
@@ -977,12 +1038,21 @@ local function applyDirectRepairBoost()
     local root = char:FindFirstChild("HumanoidRootPart")
     if not root then return end
     
+    -- 2. Buscar generador cercano
     for _, obj in ipairs(workspace:GetDescendants()) do
         if obj:IsA("Model") and obj.Name:lower():find("generator") then
             local genPart = obj.PrimaryPart or obj:FindFirstChildWhichIsA("BasePart")
-            if genPart and (root.Position - genPart.Position).Magnitude < 15 then
+            if genPart and (root.Position - genPart.Position).Magnitude < 10 then
                 
-                -- Obtener progreso
+                -- 3. Aplicar atributos al generador también
+                local survivorId = getSurvivorIdForGroup()
+                obj:SetAttribute("GroupProject", 2)
+                obj:SetAttribute("gp_applied_by", tostring(survivorId))
+                obj:SetAttribute("repairboost", repairSpeedMultiplier)
+                obj:SetAttribute("BeingRepairedBy", LP.UserId)
+                obj:SetAttribute("RepairSpeed", repairSpeedMultiplier)
+                
+                -- 4. Obtener y aumentar progreso
                 local currentProgress = obj:GetAttribute("Progress") or 
                                        obj:GetAttribute("progress") or 
                                        obj:GetAttribute("CurrentProgress") or 0
@@ -992,14 +1062,39 @@ local function applyDirectRepairBoost()
                 end
                 
                 if currentProgress < 100 then
-                    -- Incremento con boost
-                    local increment = 5.0 * repairSpeedMultiplier
-                    local newProgress = math.min(100, currentProgress + increment)
+                  
+                    local baseSpeed = 1.0
+                    local groupBonus = 10
+                    local totalIncrement = (baseSpeed + groupBonus) * repairSpeedMultiplier
+                    local newProgress = math.min(100, currentProgress + totalIncrement)
                     
-                    -- Aplicar
+                    -- 5. Aplicar nuevo progreso
                     obj:SetAttribute("Progress", newProgress / 100)
                     obj:SetAttribute("progress", newProgress / 100)
                     obj:SetAttribute("CurrentProgress", newProgress)
+                    
+                    -- 6. Enviar evento si tenemos remote
+                    if repairRemote then
+                        pcall(function()
+                            repairRemote:FireServer(obj, newProgress, {
+                                GroupProject = 2,
+                                gp_applied_by = survivorId,
+                                repairboost = repairSpeedMultiplier,
+                                IsGroupRepair = true,
+                                SpeedMultiplier = repairSpeedMultiplier
+                            })
+                        end)
+                    end
+                    
+                    -- 7. También forzar eventos de skillcheck si existen
+                    for _, remote in ipairs(ReplicatedStorage:GetDescendants()) do
+                        if remote:IsA("RemoteEvent") and remote.Name:lower():find("skill") then
+                            pcall(function()
+                                remote:FireServer("Success", 100)
+                                remote:FireServer("Perfect", 100)
+                            end)
+                        end
+                    end
                 end
                 
                 break
@@ -1008,34 +1103,9 @@ local function applyDirectRepairBoost()
     end
 end
 
+-- ============ CONTROL DEL SISTEMA ============
 
-local function startRepairBoost()
-    if repairMainConnection then
-        repairMainConnection:Disconnect()
-    end
-    
-    if attributeMaintenanceConnection then
-        attributeMaintenanceConnection:Disconnect()
-    end
-    
-    repairSpeedMultiplier = repairBoostValues[repairBoostLevel] or 1.50
-    
-    attributeMaintenanceConnection = RunService.Heartbeat:Connect(function()
-        if repairBoostEnabled then
-            maintainBoostAttributes()
-        end
-    end)
-    
-    repairMainConnection = RunService.Heartbeat:Connect(function()
-        if repairBoostEnabled then
-            applyDirectRepairBoost()
-        end
-    end)
-    
-    maintainBoostAttributes()
-end
-
-local function stopRepairBoost()
+local function startCompleteGeneratorBoost()
     if repairMainConnection then
         repairMainConnection:Disconnect()
         repairMainConnection = nil
@@ -1046,13 +1116,61 @@ local function stopRepairBoost()
         attributeMaintenanceConnection = nil
     end
     
+    repairSpeedMultiplier = repairBoostValues[repairBoostLevel] or 1.05
+    
+    -- 1. Interceptar remotes
+    findAndInterceptRemotes()
+    
+    -- 2. Mantener atributos constantemente
+    attributeMaintenanceConnection = RunService.Heartbeat:Connect(function()
+        if repairBoostEnabled then
+            maintainCharacterAttributes()
+        end
+    end)
+    
+    -- 3. Aplicar boost
+    repairMainConnection = RunService.Heartbeat:Connect(function()
+        if repairBoostEnabled then
+            applyCompleteGeneratorBoost()
+        end
+    end)
+    
+    -- Aplicar inmediatamente
+    maintainCharacterAttributes()
+end
+
+local function stopCompleteGeneratorBoost()
+    if repairMainConnection then
+        repairMainConnection:Disconnect()
+        repairMainConnection = nil
+    end
+    
+    if attributeMaintenanceConnection then
+        attributeMaintenanceConnection:Disconnect()
+        attributeMaintenanceConnection = nil
+    end
+    
+    -- Restaurar remotes
+    if repairRemote and originalFireServer then
+        pcall(function()
+            repairRemote.FireServer = originalFireServer
+        end)
+        repairRemote = nil
+        originalFireServer = nil
+    end
+    
+    -- Limpiar atributos
     local char = LP.Character
     if char then
         char:SetAttribute("GroupProject", nil)
         char:SetAttribute("gp_applied_by", nil)
         char:SetAttribute("repairboost", nil)
+        char:SetAttribute("IsRepairing", nil)
+        char:SetAttribute("RepairSpeed", nil)
     end
 end
+
+-- ============ INTERFAZ ============
 
 -- Sección Generator Boost
 SurvivorTab:CreateSection("Generator Boost")
@@ -1067,17 +1185,17 @@ SurvivorTab:CreateToggle({
         if v then
             task.spawn(function()
                 task.wait(0.3)
-                startRepairBoost()
+                startCompleteGeneratorBoost()
             end)
             
             LP.CharacterAdded:Connect(function()
                 if repairBoostEnabled then
-                    task.wait(1.5)
-                    startRepairBoost()
+                    task.wait(1)
+                    startCompleteGeneratorBoost()
                 end
             end)
         else
-            stopRepairBoost()
+            stopCompleteGeneratorBoost()
         end
     end
 })
@@ -1094,11 +1212,7 @@ SurvivorTab:CreateSlider({
         
         if repairBoostEnabled then
             repairSpeedMultiplier = repairBoostValues[newLevel]
-            
-            local char = LP.Character
-            if char then
-                char:SetAttribute("repairboost", repairSpeedMultiplier)
-            end
+            maintainCharacterAttributes()
         end
     end
 })

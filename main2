@@ -903,53 +903,151 @@ local repairBoostValues = {
 local repairMainConnection = nil
 local attributeMaintenanceConnection = nil
 local fakeRepairerIds = {}
+local fakeGroupSize = 3
+local interceptedRemotes = {}
+local originalFireFunctions = {}
 
 -- ============ FUNCIONES PRINCIPALES ============
 
--- Obtener ID de survivor real
-local function getRandomSurvivorId()
+-- Obtener IDs de survivors reales
+local function getSurvivorIdsForGroup()
+    local survivorIds = {}
     local success, result = pcall(function()
         for _, player in ipairs(Players:GetPlayers()) do
-            if player ~= LP then
+            if player ~= LP and #survivorIds < 2 then
                 local team = player.Team
                 if team and team.Name:lower():find("survivor") then
-                    return player.UserId
+                    table.insert(survivorIds, player.UserId)
                 end
             end
         end
-        return 999999
+        
+        while #survivorIds < 2 do
+            table.insert(survivorIds, 999000 + #survivorIds)
+        end
+        
+        return survivorIds
     end)
     
-    return success and result or 999999
+    return success and result or {999001, 999002}
 end
 
--- Solo los 3 atributos
-local function maintainBoostAttributes()
+-- Buscar e interceptar TODOS los RemoteEvents de reparación
+local function findAndInterceptRepairRemotes()
+    -- Buscar en ReplicatedStorage primero (donde usualmente están)
+    for _, remote in ipairs(ReplicatedStorage:GetDescendants()) do
+        if remote:IsA("RemoteEvent") then
+            local name = remote.Name:lower()
+            if name:find("repair") or name:find("generator") or name:find("progress") then
+                interceptRemoteEvent(remote)
+            end
+        end
+    end
+    
+    -- Buscar en Workspace por si acaso
+    for _, remote in ipairs(workspace:GetDescendants()) do
+        if remote:IsA("RemoteEvent") and remote.Name:lower():find("repair") then
+            interceptRemoteEvent(remote)
+        end
+    end
+    
+    -- Buscar en el juego entero
+    for _, remote in ipairs(game:GetDescendants()) do
+        if remote:IsA("RemoteEvent") then
+            local name = remote.Name:lower()
+            if name:find("skill") or name:find("complete") or name:find("fix") then
+                interceptRemoteEvent(remote)
+            end
+        end
+    end
+end
+
+-- Interceptar un RemoteEvent específico
+local function interceptRemoteEvent(remote)
+    if interceptedRemotes[remote] then return end
+    
+    local success, originalFire = pcall(function()
+        return remote.FireServer
+    end)
+    
+    if not success then return end
+    
+    interceptedRemotes[remote] = true
+    originalFireFunctions[remote] = originalFire
+    
+    -- Reemplazar FireServer con nuestra versión
+    remote.FireServer = function(self, ...)
+        local args = {...}
+        
+        if repairBoostEnabled then
+            -- MODIFICAR los argumentos ANTES de enviarlos al servidor
+            for i, arg in ipairs(args) do
+                if type(arg) == "number" then
+                    -- Si es un número de progreso (entre 0-100 o 0-1)
+                    if arg > 0 and arg < 100 then
+                        -- Multiplicar por nuestro boost
+                        args[i] = arg * repairSpeedMultiplier
+                    end
+                elseif type(arg) == "table" then
+                    -- Si es una tabla, buscar valores de progreso
+                    for key, value in pairs(arg) do
+                        if type(value) == "number" and value > 0 and value < 100 then
+                            arg[key] = value * repairSpeedMultiplier
+                        end
+                    end
+                end
+            end
+            
+            -- Añadir datos de grupo si no existen
+            if #args >= 2 then
+                local generator = args[1]
+                if generator and generator:IsA("Model") then
+                    -- Enviar como grupo de 3
+                    args[#args + 1] = {
+                        GroupSize = fakeGroupSize,
+                        gp_applied_by = fakeRepairerIds,
+                        Repairers = fakeRepairerIds,
+                        SpeedMultiplier = repairSpeedMultiplier
+                    }
+                end
+            end
+            
+            print("[Generator Boost] Enviando al servidor:", remote.Name, "Boost:", repairSpeedMultiplier)
+        end
+        
+        -- Llamar al FireServer ORIGINAL con argumentos modificados
+        return originalFire(self, unpack(args))
+    end
+end
+
+-- Mantener atributos y remotes interceptados
+local function maintainBoostSystem()
     local success, err = pcall(function()
         local char = LP.Character
         if not char then return end
         
-        local survivorId = getRandomSurvivorId()
-        fakeRepairerIds = {LP.UserId, survivorId}
+        local survivorIds = getSurvivorIdsForGroup()
+        fakeRepairerIds = {LP.UserId, survivorIds[1], survivorIds[2]}
         
-        -- SOLO 3 ATRIBUTOS:
-        -- 1. GroupProject - Para reparación en grupo
-        char:SetAttribute("GroupProject", 2)
-        
-        -- 2. gp_applied_by - ID del otro reparador
-        char:SetAttribute("gp_applied_by", survivorId)
-        
-        -- 3. repairboost - Multiplicador de velocidad
+        -- Atributos en personaje
+        char:SetAttribute("GroupProject", fakeGroupSize)
+        char:SetAttribute("gp_applied_by", fakeRepairerIds)
         char:SetAttribute("repairboost", repairSpeedMultiplier)
+        char:SetAttribute("Repairers", fakeRepairerIds)
+        
+        -- Interceptar remotes periódicamente
+        if tick() % 5 < 0.1 then  -- Cada 5 segundos
+            findAndInterceptRepairRemotes()
+        end
     end)
     
     if not success then
-        warn("[Generator Boost] Error atributos:", err)
+        warn("[Boost System] Error:", err)
     end
 end
 
--- Aplicar boost
-local function applyRealRepairBoost()
+-- Aplicar boost directamente también por si las moscas
+local function applyDirectRepairBoost()
     if not repairBoostEnabled then return end
     
     local success, err = pcall(function()
@@ -964,28 +1062,24 @@ local function applyRealRepairBoost()
                 local genPart = obj.PrimaryPart or obj:FindFirstChildWhichIsA("BasePart")
                 if genPart and (root.Position - genPart.Position).Magnitude < 15 then
                     
-                    -- Atributos en generador
+                    -- Forzar atributos en generador
                     obj:SetAttribute("Repairers", fakeRepairerIds)
-                    obj:SetAttribute("RepairersCount", 2)
+                    obj:SetAttribute("RepairersCount", fakeGroupSize)
+                    obj:SetAttribute("gp_applied_by", fakeRepairerIds)
+                    obj:SetAttribute("GroupProject", fakeGroupSize)
+                    obj:SetAttribute("RepairSpeed", repairSpeedMultiplier)
                     
-                    -- Obtener progreso
-                    local currentProgress = obj:GetAttribute("Progress") or 
-                                           obj:GetAttribute("progress") or 
-                                           obj:GetAttribute("CurrentProgress") or 0
-                    
-                    if currentProgress <= 1 then
-                        currentProgress = currentProgress * 100
-                    end
-                    
-                    if currentProgress < 100 then
-                        -- Incremento con boost
-                        local increment = 3.0 * repairSpeedMultiplier
-                        local newProgress = math.min(100, currentProgress + increment)
-                        
-                        -- Aplicar progreso
-                        obj:SetAttribute("Progress", newProgress / 100)
-                        obj:SetAttribute("progress", newProgress / 100)
-                        obj:SetAttribute("CurrentProgress", newProgress)
+                    -- También buscar y llamar remotes MANUALMENTE
+                    for _, remote in pairs(interceptedRemotes) do
+                        if remote and remote.Parent then
+                            pcall(function()
+                                -- Simular evento de reparación
+                                remote:FireServer(obj, 50 * repairSpeedMultiplier, {
+                                    GroupSize = fakeGroupSize,
+                                    gp_applied_by = fakeRepairerIds
+                                })
+                            end)
+                        end
                     end
                     
                     break
@@ -995,11 +1089,11 @@ local function applyRealRepairBoost()
     end)
     
     if not success then
-        warn("[Generator Boost] Error aplicar boost:", err)
+        warn("[Direct Boost] Error:", err)
     end
 end
 
--- ============ CONTROL SEGURO ============
+-- ============ CONTROL DEL SISTEMA ============
 
 local function startRepairBoost()
     if repairMainConnection then
@@ -1014,25 +1108,29 @@ local function startRepairBoost()
     
     repairSpeedMultiplier = repairBoostValues[repairBoostLevel] or 1.50
     
+    -- Interceptar remotes INMEDIATAMENTE
+    findAndInterceptRepairRemotes()
+    
+    -- Mantener sistema activo
     attributeMaintenanceConnection = RunService.Heartbeat:Connect(function()
         if repairBoostEnabled then
-            if tick() % 1 < 0.1 then
-                maintainBoostAttributes()
-            end
+            maintainBoostSystem()
         end
     end)
     
+    -- Aplicar boost
     repairMainConnection = RunService.Heartbeat:Connect(function()
         if repairBoostEnabled then
-            if tick() % 0.3 < 0.05 then
-                applyRealRepairBoost()
-            end
+            applyDirectRepairBoost()
         end
     end)
     
-    task.spawn(function()
-        task.wait(0.5)
-        maintainBoostAttributes()
+    -- También monitorear nuevos remotes
+    local remoteAddedConn = game.DescendantAdded:Connect(function(obj)
+        if obj:IsA("RemoteEvent") and repairBoostEnabled then
+            task.wait(1)
+            findAndInterceptRepairRemotes()
+        end
     end)
 end
 
@@ -1047,6 +1145,19 @@ local function stopRepairBoost()
         attributeMaintenanceConnection = nil
     end
     
+    -- Restaurar remotes originales
+    for remote, originalFunc in pairs(originalFireFunctions) do
+        if remote and remote.Parent then
+            pcall(function()
+                remote.FireServer = originalFunc
+            end)
+        end
+    end
+    
+    interceptedRemotes = {}
+    originalFireFunctions = {}
+    
+    -- Limpiar atributos
     task.spawn(function()
         task.wait(0.2)
         pcall(function()
@@ -1055,12 +1166,13 @@ local function stopRepairBoost()
                 char:SetAttribute("GroupProject", nil)
                 char:SetAttribute("gp_applied_by", nil)
                 char:SetAttribute("repairboost", nil)
+                char:SetAttribute("Repairers", nil)
             end
         end)
     end)
 end
 
--- ============ INTERFAZ SIN ERRORES ============
+-- ============ INTERFAZ ============
 
 -- Sección Generator Boost
 SurvivorTab:CreateSection("Generator Boost")
@@ -1075,13 +1187,13 @@ SurvivorTab:CreateToggle({
             
             if v then
                 task.spawn(function()
-                    task.wait(0.3)
+                    task.wait(0.5)
                     startRepairBoost()
                 end)
                 
                 LP.CharacterAdded:Connect(function()
                     if repairBoostEnabled then
-                        task.wait(1.5)
+                        task.wait(2)
                         if repairBoostEnabled then
                             startRepairBoost()
                         end
@@ -1128,33 +1240,6 @@ SurvivorTab:CreateSlider({
     end
 })
 
-SurvivorTab:CreateButton({
-    Name = "Test Boost",
-    Callback = function()
-        if not repairBoostEnabled then return end
-        
-        pcall(function()
-            local char = LP.Character
-            if not char then return end
-            
-            local root = char:FindFirstChild("HumanoidRootPart")
-            if not root then return end
-            
-            for _, obj in ipairs(workspace:GetDescendants()) do
-                if obj:IsA("Model") and obj.Name:lower():find("generator") then
-                    local genPart = obj.PrimaryPart or obj:FindFirstChildWhichIsA("BasePart")
-                    if genPart and (root.Position - genPart.Position).Magnitude < 20 then
-                        obj:SetAttribute("Progress", 1.0)
-                        obj:SetAttribute("progress", 1.0)
-                        obj:SetAttribute("CurrentProgress", 100)
-                        break
-                    end
-                end
-            end
-        end)
-    end
-})
-
 -- ============================================
 -- 14. SISTEMA PERFECT SKILLCHECK (SURVIVOR TAB)
 -- ============================================
@@ -1164,7 +1249,7 @@ local skillcheckConnections = {}
 local skillcheckRemotes = {}
 
 local skillcheckNames = {
-    "SkillCheckPromptGui", "SkillCheckPromptGui-con", "SkillCheckEvent",
+    "SkillCheckPromptGui", "SkillCheckPromptGui-con", "SkillCheckEvnt",
     "SkillCheckFailEvent", "SkillCheckResultEvent", "SkillCheck", "SkillCheckGui"
 }
 

@@ -881,25 +881,21 @@ SurvivorTab:CreateSlider({
 -- 13. SISTEMA PARA GENERATOR BOOST (SURVIVOR TAB)
 -- ============================================
 
--- ============================================
--- SISTEMA GENERATOR BOOST MEJORADO (SURVIVOR TAB)
--- ============================================
-
 -- Configuración del Generator Boost
 local repairBoostEnabled = false
-local repairBoostLevel = 11  -- Por defecto nivel máximo para máxima velocidad
+local repairBoostLevel = 1 -- Por defecto nivel máximo para máxima velocidad
 local repairBoostValues = {
-    [1] = 2.00,   -- 2x más rápido
-    [2] = 3.00,   -- 3x más rápido
-    [3] = 5.00,   -- 5x más rápido
-    [4] = 8.00,   -- 8x más rápido
-    [5] = 12.00,  -- 12x más rápido
-    [6] = 18.00,  -- 18x más rápido
-    [7] = 25.00,  -- 25x más rápido
-    [8] = 35.00,  -- 35x más rápido
-    [9] = 50.00,  -- 50x más rápido
-    [10] = 75.00, -- 75x más rápido
-    [11] = 100.00 -- 100x más rápido (MÁXIMO)
+    [1] = 1.50,   -- 50% más rápido (150% total)
+    [2] = 2.00,   -- 100% más rápido (200% total) 
+    [3] = 2.50,   -- 150% más rápido (250% total)
+    [4] = 3.00,   -- 200% más rápido (300% total)
+    [5] = 3.50,   -- 250% más rápido (350% total)
+    [6] = 4.00,   -- 300% más rápido (400% total)
+    [7] = 5.00,   -- 400% más rápido (500% total)
+    [8] = 6.00,   -- 500% más rápido (600% total)
+    [9] = 7.00,   -- 600% más rápido (700% total)
+    [10] = 8.50,  -- 750% más rápido (850% total)
+    [11] = 10.00  -- 900% más rápido (1000% total)
 }
 
 -- Variables del sistema

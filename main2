@@ -919,252 +919,302 @@ SurvivorTab:CreateSlider({
 -- GENERATOR BOOST
 -- ============================================
 
--- Configuración
+-- Configuración REAL
 local repairBoostEnabled = false
 local repairBoostLevel = 1
-local repairBoostValues = {
-    [1] = 1.50,
-    [2] = 2.00,
-    [3] = 2.50,
-    [4] = 3.00,
-    [5] = 4.00
+local repairBoostValues = {1.5, 2.0, 3.0, 5.0, 10.0, 15.0,}
+
+-- Sistema de simulación avanzado
+local fakePlayerSimulation = {
+    active = false,
+    userId = nil,
+    character = nil,
+    position = nil,
+    lastUpdate = 0
 }
 
--- Variables optimizadas
-local repairLoop = nil
-local characterMonitor = nil
-local lastGenerator = nil
-
--- Cache para eficiencia
-local playerUserId = LP.UserId
-
--- ============ FUNCIONES PRINCIPALES OPTIMIZADAS ============
-
--- Obtener survivor real (optimizado)
-local function getRandomSurvivorId()
+-- Obtener survivor REAL que esté vivo y cerca
+local function getValidSurvivorForSimulation()
+    local survivors = {}
+    
     for _, player in ipairs(Players:GetPlayers()) do
         if player ~= LP and player.Team and player.Team.Name:lower():find("survivor") then
-            return player.UserId
-        end
-    end
-    return 999999
-end
-
--- Encontrar generador más cercano (más eficiente que GetDescendants cada frame)
-local function findNearestGenerator(position, maxDistance)
-    local nearest = nil
-    local nearestDist = maxDistance
-    
-    -- Cache de generadores (actualizado cada 2 segundos)
-    if not script.Parent.GeneratorCache or tick() - (script.Parent.LastCacheUpdate or 0) > 2 then
-        local cache = {}
-        for _, obj in ipairs(workspace:GetDescendants()) do
-            if obj:IsA("Model") and obj.Name:lower():find("generator") then
-                local genPart = obj.PrimaryPart or obj:FindFirstChildWhichIsA("BasePart")
-                if genPart then
-                    cache[#cache + 1] = {
-                        model = obj,
-                        part = genPart
-                    }
+            -- Verificar que esté vivo y en partida
+            if player.Character and player.Character:FindFirstChild("Humanoid") then
+                local humanoid = player.Character.Humanoid
+                if humanoid.Health > 0 then
+                    -- Verificar distancia (no muy lejos)
+                    local myRoot = LP.Character and LP.Character:FindFirstChild("HumanoidRootPart")
+                    local theirRoot = player.Character:FindFirstChild("HumanoidRootPart")
+                    
+                    if myRoot and theirRoot then
+                        local distance = (myRoot.Position - theirRoot.Position).Magnitude
+                        if distance < 100 then
+                            table.insert(survivors, {
+                                player = player,
+                                userId = player.UserId,
+                                distance = distance
+                            })
+                        end
+                    end
                 end
             end
         end
-        script.Parent.GeneratorCache = cache
-        script.Parent.LastCacheUpdate = tick()
     end
     
-    -- Buscar en cache
-    for _, genData in ipairs(script.Parent.GeneratorCache) do
-        local distance = (position - genData.part.Position).Magnitude
-        if distance < nearestDist then
-            nearestDist = distance
-            nearest = genData.model
+    -- Ordenar por cercanía
+    table.sort(survivors, function(a, b)
+        return a.distance < b.distance
+    end)
+    
+    return #survivors > 0 and survivors[1].userId or nil
+end
+
+-- Crear simulación REAL de segundo reparador
+local function createFakeRepairerSimulation(generator)
+    if not generator then return nil end
+    
+    local now = tick()
+    
+    if fakePlayerSimulation.active and fakePlayerSimulation.character then
+
+        local genPart = generator.PrimaryPart
+        if genPart then
+
+            local offset = Vector3.new(3, 0, 0)  -- 3 studs de distancia
+            fakePlayerSimulation.position = genPart.Position + offset
+            
+            -- Actualizar atributos de posición en el generador
+            generator:SetAttribute("FakeRepairerPos", fakePlayerSimulation.position)
+            generator:SetAttribute("FakeRepairerActive", true)
+            generator:SetAttribute("FakeRepairerLastUpdate", now)
+        end
+        
+        return fakePlayerSimulation.userId
+    end
+    
+    -- Crear nueva simulación
+    local validSurvivorId = getValidSurvivorForSimulation()
+    if not validSurvivorId then
+
+        for _, player in ipairs(Players:GetPlayers()) do
+            if player ~= LP then
+                validSurvivorId = player.UserId
+                break
+            end
         end
     end
     
-    return nearest, nearestDist
+    fakePlayerSimulation = {
+        active = true,
+        userId = validSurvivorId or 999999,
+        character = "SimulatedCharacter",
+        position = generator.PrimaryPart and (generator.PrimaryPart.Position + Vector3.new(3, 0, 0)),
+        lastUpdate = now
+    }
+    
+    -- Establecer todos los atributos que el juego podría verificar
+    generator:SetAttribute("FakeRepairerId", fakePlayerSimulation.userId)
+    generator:SetAttribute("FakeRepairerPos", fakePlayerSimulation.position)
+    generator:SetAttribute("FakeRepairerActive", true)
+    generator:SetAttribute("FakeRepairerLastUpdate", now)
+    
+    -- Atributo crítico: Lista de reparadores ACTIVOS
+    local currentRepairers = generator:GetAttribute("ActiveRepairerList") or {}
+    if type(currentRepairers) == "table" then
+        currentRepairers[LP.UserId] = true
+        currentRepairers[fakePlayerSimulation.userId] = true
+        generator:SetAttribute("ActiveRepairerList", currentRepairers)
+    else
+        generator:SetAttribute("ActiveRepairerList", {
+            [LP.UserId] = true,
+            [fakePlayerSimulation.userId] = true
+        })
+    end
+    
+    return fakePlayerSimulation.userId
 end
 
--- Aplicar atributos SOLO cuando estemos cerca de un generador
-local function applyBoostAttributes()
+-- Sistema de boost
+local function applyRealGeneratorBoost()
+    if not repairBoostEnabled then return end
+    
     local char = LP.Character
-    if not char then return false end
+    if not char or not char:FindFirstChild("HumanoidRootPart") then return end
     
-    local root = char:FindFirstChild("HumanoidRootPart")
-    if not root then return false end
+    local root = char.HumanoidRootPart
     
-    local generator, distance = findNearestGenerator(root.Position, 15)
-    if not generator then 
-        -- Limpiar atributos si nos alejamos
-        if lastGenerator then
-            char:SetAttribute("GroupProject", nil)
-            char:SetAttribute("gp_applied_by", nil)
-            char:SetAttribute("repairboost", nil)
-            lastGenerator = nil
+    -- Buscar generador cercano
+    local nearestGenerator = nil
+    local nearestDistance = 20
+    
+    for _, obj in ipairs(workspace:GetDescendants()) do
+        if obj:IsA("Model") and (obj.Name:lower():find("generator") or obj:GetAttribute("IsGenerator") == true) then
+            local genPart = obj.PrimaryPart or obj:FindFirstChildWhichIsA("BasePart")
+            if genPart then
+                local distance = (root.Position - genPart.Position).Magnitude
+                if distance < nearestDistance then
+                    nearestDistance = distance
+                    nearestGenerator = obj
+                end
+            end
         end
-        return false 
     end
     
-    lastGenerator = generator
+    if not nearestGenerator then return end
     
-    -- Solo estos 3 atributos (como mencionaste)
-    local survivorId = getRandomSurvivorId()
-    local currentMultiplier = repairBoostValues[repairBoostLevel] or 1.50
+    local fakePlayerId = createFakeRepairerSimulation(nearestGenerator)
     
-    -- Atributo 1: GroupProject (debe ser número)
-    char:SetAttribute("GroupProject", 2) -- 2 reparadores
+    char:SetAttribute("GroupProject", 2)
+    char:SetAttribute("gp_applied_by", fakePlayerId)
+    char:SetAttribute("repairboost", repairBoostValues[repairBoostLevel])
+    char:SetAttribute("IsRepairing", true)
+    char:SetAttribute("RepairTarget", nearestGenerator.Name)
+    char:SetAttribute("RepairStartTime", tick())
     
-    -- Atributo 2: gp_applied_by (ID del otro reparador)
-    char:SetAttribute("gp_applied_by", survivorId)
+    nearestGenerator:SetAttribute("ActiveRepairers", 2)
+    nearestGenerator:SetAttribute("RepairSpeedMultiplier", repairBoostValues[repairBoostLevel])
+    nearestGenerator:SetAttribute("LastRepairUpdate", tick())
+    nearestGenerator:SetAttribute("Repairer1", LP.UserId)
+    nearestGenerator:SetAttribute("Repairer2", fakePlayerId)
     
-    -- Atributo 3: repairboost (multiplicador)
-    char:SetAttribute("repairboost", currentMultiplier)
-    
-    generator:SetAttribute("ActiveRepairers", 2)
-    generator:SetAttribute("RepairSpeedMultiplier", currentMultiplier)
-    
-    -- Intentar simular el progreso REAL del servidor
-    simulateServerProgress(generator, currentMultiplier)
-    
-    return true
-end
-
--- Simular el incremento de progreso que haría el servidor
-local function simulateServerProgress(generator, multiplier)
-    if not generator then return end
-    
-    -- Obtener progreso actual (probando diferentes nombres)
-    local progress = generator:GetAttribute("Progress") or 
-                    generator:GetAttribute("progress") or 
-                    generator:GetAttribute("CurrentProgress") or 0
+    local currentProgress = nearestGenerator:GetAttribute("Progress") or 
+                           nearestGenerator:GetAttribute("progress") or 
+                           nearestGenerator:GetAttribute("CurrentProgress") or 0
     
     -- Normalizar a 0-100
-    if progress <= 1 then
-        progress = progress * 100
+    if currentProgress <= 1 then
+        currentProgress = currentProgress * 100
     end
     
-    if progress < 100 then
-        -- Incremento base del juego (ajustar según necesidad)
-        local baseIncrement = 2.0
-        local boostedIncrement = baseIncrement * multiplier
+    if currentProgress < 100 then
+        local baseIncrement = 10.0 --10% por base
+        local levelBonus = (repairBoostLevel - 1) * 10  -- 0, 7.5, 15, 22.5, 30
+        local totalIncrement = baseIncrement + levelBonus
         
-        local newProgress = math.min(100, progress + boostedIncrement)
+        local newProgress = math.min(100, currentProgress + totalIncrement)
         
-        -- Establecer en TODOS los nombres posibles
-        generator:SetAttribute("Progress", newProgress)
-        generator:SetAttribute("progress", newProgress)
-        generator:SetAttribute("CurrentProgress", newProgress)
+        -- Aplicar progreso en TODOS los formatos posibles
+        nearestGenerator:SetAttribute("Progress", newProgress / 100)
+        nearestGenerator:SetAttribute("progress", newProgress / 100)
+        nearestGenerator:SetAttribute("CurrentProgress", newProgress)
+        nearestGenerator:SetAttribute("RepairValue", newProgress)
         
-        -- También como valor numérico directo
-        generator:SetAttribute("RepairValue", newProgress)
+        -- También modificar directamente si hay scripts de progreso
+        for _, script in ipairs(nearestGenerator:GetDescendants()) do
+            if script:IsA("Script") or script:IsA("ModuleScript") then
+                pcall(function()
+                    -- Intentar modificar variables de progreso directamente
+                    local env = getfenv(script)
+                    if env.progress then env.progress = newProgress / 100 end
+                    if env.Progress then env.Progress = newProgress / 100 end
+                    if env.currentProgress then env.currentProgress = newProgress end
+                end)
+            end
+        end
+        
+        -- Efecto visual (opcional)
+        if nearestGenerator.PrimaryPart then
+            nearestGenerator.PrimaryPart.BrickColor = BrickColor.new("Bright green")
+            
+            -- Partículas de reparación rápida
+            local sparkles = Instance.new("Sparkles")
+            sparkles.SparkleColor = Color3.new(0, 1, 0)
+            sparkles.Parent = nearestGenerator.PrimaryPart
+            task.delay(0.5, function()
+                if sparkles then sparkles:Destroy() end
+            end)
+        end
+    end
+    
+    -- CAPA 4: Interceptar RemoteEvents de reparación (si existen)
+    for _, obj in ipairs(game:GetDescendants()) do
+        if obj:IsA("RemoteEvent") then
+            local nameLower = obj.Name:lower()
+            if nameLower:find("repair") or nameLower:find("generator") then
+                pcall(function()
+                    -- Enviar datos "fake" de reparación grupal
+                    obj:FireServer({
+                        type = "GroupRepair",
+                        generator = nearestGenerator,
+                        player1 = LP,
+                        player2 = fakePlayerId,
+                        speed = repairBoostValues[repairBoostLevel],
+                        progress = nearestGenerator:GetAttribute("Progress")
+                    })
+                end)
+            end
+        end
     end
 end
 
--- ============ SISTEMA DE ACTIVACIÓN OPTIMIZADO ============
 
-local function startBoostSystem()
-    if repairLoop then
-        repairLoop:Disconnect()
-        repairLoop = nil
-    end
+local boostSystemActive = false
+local boostLoop = nil
+
+local function startRealBoostSystem()
+    if boostLoop then return end
     
-    -- Usar Stepped en lugar de Heartbeat para mejor timing
-    repairLoop = RunService.Stepped:Connect(function(time, deltaTime)
-        if not repairBoostEnabled then return end
-        
-        local success = pcall(applyBoostAttributes)
-        if not success then
-            -- Reintentar en 0.5 segundos
-            task.wait(0.5)
-        end
+    boostLoop = RunService.Heartbeat:Connect(function()
+        pcall(applyRealGeneratorBoost)
     end)
     
-    -- Monitor de cambios de personaje
-    if characterMonitor then
-        characterMonitor:Disconnect()
-    end
-    
-    characterMonitor = LP.CharacterAdded:Connect(function(char)
-        task.wait(1) -- Esperar a que el personaje esté completamente cargado
-        if repairBoostEnabled then
-            applyBoostAttributes()
-        end
-    end)
+    boostSystemActive = true
 end
 
-local function stopBoostSystem()
-    if repairLoop then
-        repairLoop:Disconnect()
-        repairLoop = nil
+local function stopRealBoostSystem()
+    if boostLoop then
+        boostLoop:Disconnect()
+        boostLoop = nil
     end
     
-    if characterMonitor then
-        characterMonitor:Disconnect()
-        characterMonitor = nil
-    end
+    boostSystemActive = false
     
-    -- Limpiar todos los atributos
+    -- Limpiar todo
     pcall(function()
         local char = LP.Character
         if char then
             char:SetAttribute("GroupProject", nil)
             char:SetAttribute("gp_applied_by", nil)
             char:SetAttribute("repairboost", nil)
+            char:SetAttribute("IsRepairing", nil)
         end
     end)
+    
+    fakePlayerSimulation.active = false
 end
 
--- Sección Generator Boost
 SurvivorTab:CreateSection("Generator Boost")
 
-local boostToggle = SurvivorTab:CreateToggle({
+SurvivorTab:CreateToggle({
     Name = "Generator Boost",
     CurrentValue = false,
-    Flag = "GeneratorBoostToggle",
+    Flag = "RealGeneratorBoost",
     Callback = function(value)
         repairBoostEnabled = value
         
         if value then
-            -- Pequeño delay para evitar spam
             task.spawn(function()
-                task.wait(0.2)
-                if repairBoostEnabled then
-                    startBoostSystem()
-                    -- Aplicar inmediatamente
-                    applyBoostAttributes()
-                end
+                task.wait(0.3)
             end)
         else
-            stopBoostSystem()
+            stopRealBoostSystem()
         end
     end
 })
 
 SurvivorTab:CreateSlider({
     Name = "Nivel de Velocidad",
-    Range = {1, 5},
+    Range = {1, 6},
     Increment = 1,  
     CurrentValue = 1,
-    Flag = "GeneratorBoostLevel",
+    Flag = "RealBoostLevel",
     Callback = function(value)
         local newLevel = math.floor(value)
         repairBoostLevel = newLevel
-        
-        -- Actualizar inmediatamente si está activo
-        if repairBoostEnabled then
-            pcall(function()
-                local char = LP.Character
-                if char then
-                    char:SetAttribute("repairboost", repairBoostValues[newLevel])
-                end
-                
-                if lastGenerator then
-                    lastGenerator:SetAttribute("RepairSpeedMultiplier", repairBoostValues[newLevel])
-                end
-            end)
-        end
     end
 })
+
 
 -- ============================================
 -- 14. SISTEMA PERFECT SKILLCHECK (SURVIVOR TAB)

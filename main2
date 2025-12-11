@@ -1762,6 +1762,442 @@ SurvivorTab:CreateToggle({
 })
 
 -- ============================================
+-- DETECTIVE DE PERKS ESPECÍFICAS
+-- ============================================
+
+local PerkDetective = {}
+
+-- Almacenar perks encontradas
+local detectedPerks = {
+    repairPerks = {},
+    generatorPerks = {},
+    playerAttributes = {}
+}
+
+-- 1. Buscar perks EN TU PERSONAJE
+function PerkDetective.scanCharacterPerks()
+    print("\n🔍 BUSCANDO PERKS EN TU PERSONAJE...")
+    
+    local char = LP.Character
+    if not char then
+        print("   ❌ No hay personaje")
+        return
+    end
+    
+    -- Buscar TODOS los atributos relacionados con perks/mejoras
+    print("   📋 Atributos del personaje:")
+    for attrName, attrValue in pairs(char:GetAttributes()) do
+        local nameLower = attrName:lower()
+        
+        -- Filtrar atributos que podrían ser perks
+        if nameLower:find("perk") or 
+           nameLower:find("skill") or 
+           nameLower:find("ability") or
+           nameLower:find("boost") or
+           nameLower:find("bonus") or
+           nameLower:find("upgrade") then
+            
+            detectedPerks.playerAttributes[attrName] = attrValue
+            
+            print(string.format("     🎯 %s = %s (tipo: %s)", 
+                attrName, tostring(attrValue), typeof(attrValue)))
+        end
+    end
+    
+    -- Buscar scripts o módulos de perks
+    for _, child in ipairs(char:GetDescendants()) do
+        if child:IsA("ModuleScript") or child:IsA("Script") then
+            local nameLower = child.Name:lower()
+            if nameLower:find("perk") or nameLower:find("skill") then
+                print("     📜 Script de perk:", child.Name, "(", child.ClassName, ")")
+            end
+        end
+    end
+end
+
+-- 2. Buscar perks EN EL JUEGO (RemoteEvents, servicios)
+function PerkDetective.scanGamePerks()
+    print("\n🔍 BUSCANDO PERKS EN EL JUEGO...")
+    
+    -- Buscar en ReplicatedStorage (donde suelen estar las perks)
+    local repStorage = game:GetService("ReplicatedStorage")
+    
+    -- Buscar módulos de perks
+    local perkModules = {}
+    for _, item in ipairs(repStorage:GetDescendants()) do
+        local nameLower = item.Name:lower()
+        
+        if item:IsA("ModuleScript") and (
+           nameLower:find("perk") or 
+           nameLower:find("skill") or
+           nameLower:find("generator") and nameLower:find("repair") or
+           nameLower:find("coop") or nameLower:find("group")) then
+            
+            table.insert(perkModules, {
+                name = item.Name,
+                path = item:GetFullName(),
+                type = "ModuleScript"
+            })
+            
+            print("     📦 Módulo encontrado:", item.Name)
+        end
+        
+        -- Buscar StringValues con nombres de perks
+        if item:IsA("StringValue") or item:IsA("NumberValue") then
+            if nameLower:find("prove thyself") or  -- Perk conocida de DBD
+               nameLower:find("better together") or
+               nameLower:find("desperate measures") or
+               nameLower:find("botany knowledge") then
+                print("     🏷️  Perk conocida:", item.Name, "=", item.Value)
+            end
+        end
+    end
+    
+    detectedPerks.repairPerks = perkModules
+    return perkModules
+end
+
+-- 3. MONITOREAR CUANDO ACTIVAS TU PERK REALMENTE
+function PerkDetective.monitorRealPerkUsage()
+    print("\n🔍 MONITOREANDO USO REAL DE PERK...")
+    print("   (Activa tu perk normalmente para capturar datos)")
+    
+    -- Monitorear cambios en atributos DURANTE reparación
+    local lastValues = {}
+    local perkActivations = {}
+    
+    local char = LP.Character
+    if not char then
+        print("   ❌ Esperando personaje...")
+        
+        -- Esperar a tener personaje
+        local connection
+        connection = LP.CharacterAdded:Connect(function(newChar)
+            task.wait(2)
+            PerkDetective.monitorRealPerkUsage()
+            connection:Disconnect()
+        end)
+        return
+    end
+    
+    -- Conectar a cambios de atributos
+    char.AttributeChanged:Connect(function(attrName)
+        local newValue = char:GetAttribute(attrName)
+        local lastValue = lastValues[attrName]
+        
+        if lastValue ~= newValue then
+            -- Filtrar atributos de interés
+            if attrName:lower():find("perk") or 
+               attrName:lower():find("group") or
+               attrName:lower():find("coop") or
+               attrName:lower():find("repair") then
+                
+                local timestamp = tick()
+                table.insert(perkActivations, {
+                    time = timestamp,
+                    attribute = attrName,
+                    oldValue = lastValue,
+                    newValue = newValue
+                })
+                
+                print(string.format("   ⚡ [PERK ACTIVADA] %s: %s → %s", 
+                    attrName, tostring(lastValue), tostring(newValue)))
+                
+                -- Mostrar TODOS los atributos en ese momento
+                task.wait(0.1)
+                print("     📊 Estado completo del personaje:")
+                for aName, aValue in pairs(char:GetAttributes()) do
+                    if aName:lower():find("perk") or aName:lower():find("repair") then
+                        print(string.format("       • %s = %s", aName, tostring(aValue)))
+                    end
+                end
+            end
+            
+            lastValues[attrName] = newValue
+        end
+    end)
+    
+    -- También monitorear RemoteEvents de perks
+    for _, remote in ipairs(game:GetDescendants()) do
+        if remote:IsA("RemoteEvent") then
+            local nameLower = remote.Name:lower()
+            if nameLower:find("perk") or nameLower:find("skill") then
+                print("   📡 RemoteEvent de perk encontrado:", remote.Name)
+                
+                -- Intentar interceptar
+                local originalFire = remote.FireServer
+                remote.FireServer = function(self, ...)
+                    local args = {...}
+                    print("   🔥 Remote llamado:", remote.Name)
+                    print("      Args:", unpack(args))
+                    return originalFire(self, ...)
+                end
+            end
+        end
+    end
+    
+    return perkActivations
+end
+
+-- 4. PROBAR PERKS CONOCIDAS de juegos similares
+function PerkDetective.testKnownPerks()
+    print("\n🧪 PROBANDO PERKS CONOCIDAS...")
+    
+    local knownPerks = {
+        -- Perks de Dead by Daylight (probablemente similar)
+        {name = "ProveThyself", attributes = {
+            "ProveThyself_Active", 
+            "CooperativeRepair_Bonus", 
+            "RepairSpeed_Group"
+        }},
+        {name = "BetterTogether", attributes = {
+            "BetterTogether_Range",
+            "SharedRepair_Speed",
+            "CoopRepair_Bonus"
+        }},
+        {name = "DesperateMeasures", attributes = {
+            "DesperateMeasures_Count",
+            "InjuredRepair_Bonus",
+            "HealingSpeed_Bonus"
+        }},
+        -- Perks genéricas
+        {name = "CooperativeRepair", attributes = {
+            "CooperativeRepair",
+            "GroupRepair_Speed",
+            "MultiRepair_Bonus"
+        }},
+        {name = "FastTrack", attributes = {
+            "FastTrack_Stacks",
+            "GeneratorProgress_Bonus",
+            "SkillCheck_Bonus"
+        }}
+    }
+    
+    local char = LP.Character
+    if not char then return {} end
+    
+    local workingPerks = {}
+    
+    for _, perk in ipairs(knownPerks) do
+        print("\n   Probando:", perk.name)
+        
+        -- Probar cada atributo
+        for _, attr in ipairs(perk.attributes) do
+            local before = char:GetAttribute(attr)
+            
+            -- Intentar activar
+            char:SetAttribute(attr, true)
+            if attr:find("Bonus") or attr:find("Speed") then
+                char:SetAttribute(attr, 50.0)  -- Valor numérico
+            end
+            
+            task.wait(0.2)
+            
+            local after = char:GetAttribute(attr)
+            
+            if after ~= before then
+                print(string.format("     ✅ %s funciona (antes: %s, después: %s)", 
+                    attr, tostring(before), tostring(after)))
+                
+                if not workingPerks[perk.name] then
+                    workingPerks[perk.name] = {}
+                end
+                table.insert(workingPerks[perk.name], attr)
+            end
+        end
+    end
+    
+    return workingPerks
+end
+
+-- 5. Ejecutar análisis COMPLETO
+function PerkDetective.runCompleteAnalysis()
+    print("\n" .. string.rep("=", 50))
+    print("🎯 ANÁLISIS COMPLETO DE TUS PERKS")
+    print(string.rep("=", 50))
+    
+    -- Fase 1: Escaneo inicial
+    PerkDetective.scanCharacterPerks()
+    task.wait(1)
+    
+    PerkDetective.scanGamePerks()
+    task.wait(1)
+    
+    -- Fase 2: Monitorear uso REAL
+    print("\n⏳ MONITOREO ACTIVADO POR 15 SEGUNDOS...")
+    print("   Por favor, repara un generador NORMALMENTE")
+    print("   (Usa tu perk grupal si la tienes equipada)")
+    
+    local monitorData = PerkDetective.monitorRealPerkUsage()
+    
+    -- Esperar para capturar datos
+    for i = 1, 15 do
+        print(string.format("   ⌛ %d/15 segundos...", i))
+        task.wait(1)
+    end
+    
+    -- Fase 3: Probar perks conocidas
+    print("\n🧪 PROBANDO PERKS CONOCIDAS...")
+    local workingPerks = PerkDetective.testKnownPerks()
+    
+    -- Resultados
+    print("\n" .. string.rep("=", 50))
+    print("📊 RESULTADOS DEL ANÁLISIS")
+    print(string.rep("=", 50))
+    
+    print("\n🎯 PERKS DETECTADAS EN TI:")
+    if next(detectedPerks.playerAttributes) then
+        for attr, value in pairs(detectedPerks.playerAttributes) do
+            print(string.format("   • %s = %s", attr, tostring(value)))
+        end
+    else
+        print("   ❌ No se encontraron atributos de perk")
+    end
+    
+    print("\n⚡ PERKS QUE FUNCIONAN:")
+    if next(workingPerks) then
+        for perkName, attributes in pairs(workingPerks) do
+            print(string.format("   • %s:", perkName))
+            for _, attr in ipairs(attributes) do
+                print(string.format("     - %s", attr))
+            end
+        end
+    else
+        print("   ❌ No se encontraron perks funcionales")
+    end
+    
+    print("\n💡 RECOMENDACIÓN:")
+    if next(workingPerks) then
+        local bestPerk = nil
+        local bestAttributes = 0
+        
+        for perkName, attributes in pairs(workingPerks) do
+            if #attributes > bestAttributes then
+                bestAttributes = #attributes
+                bestPerk = perkName
+            end
+        end
+        
+        print("   Usa la perk:", bestPerk)
+        print("   Atributos:", table.concat(workingPerks[bestPerk], ", "))
+        
+    elseif next(detectedPerks.playerAttributes) then
+        print("   Usa los atributos encontrados en tu personaje")
+        for attr, _ in pairs(detectedPerks.playerAttributes) do
+            print("   • " .. attr)
+        end
+    else
+        print("   Usa perks genéricas de reparación grupal")
+    end
+    
+    return {
+        playerAttributes = detectedPerks.playerAttributes,
+        workingPerks = workingPerks
+    }
+end
+
+-- ============================================
+-- INTEGRACIÓN EN TU INTERFAZ
+-- ============================================
+
+-- Añade esta sección a tu SurvivorTab:
+
+SurvivorTab:CreateSection("🔍 Detective de Perks")
+
+SurvivorTab:CreateButton({
+    Name = "🔍 Analizar Mis Perks",
+    Callback = function()
+        task.spawn(function()
+            PerkDetective.runCompleteAnalysis()
+        end)
+    end
+})
+
+SurvivorTab:CreateButton({
+    Name = "📋 Ver Perks Detectadas",
+    Callback = function()
+        print("\n=== PERKS DETECTADAS ===")
+        
+        if next(detectedPerks.playerAttributes) then
+            print("🎯 Atributos en tu personaje:")
+            for attr, value in pairs(detectedPerks.playerAttributes) do
+                print(string.format("   %s = %s", attr, tostring(value)))
+            end
+        else
+            print("❌ No se han detectado perks aún")
+            print("   Usa 'Analizar Mis Perks' primero")
+        end
+    end
+})
+
+-- ============================================
+-- SISTEMA DE BOOST BASADO EN PERKS DETECTADAS
+-- ============================================
+
+local function createPerkBasedBoost(perkData)
+    local boostActive = false
+    local boostLoop = nil
+    
+    local function applyDetectedPerkBoost()
+        if not boostActive then return end
+        
+        local char = LP.Character
+        if not char then return end
+        
+        -- Aplicar atributos detectados
+        for attr, value in pairs(perkData.playerAttributes) do
+            char:SetAttribute(attr, value)
+        end
+        
+        -- Buscar generador cercano
+        for _, obj in ipairs(workspace:GetDescendants()) do
+            if obj:IsA("Model") and obj.Name:lower():find("generator") then
+                local genPart = obj.PrimaryPart
+                if genPart then
+                    local distance = (char.HumanoidRootPart.Position - genPart.Position).Magnitude
+                    
+                    if distance < 20 then
+                        -- Aplicar perks en el generador también
+                        obj:SetAttribute("PerkBoosted", true)
+                        obj:SetAttribute("PerkMultiplier", repairBoostValues[repairBoostLevel])
+                        
+                        -- Forzar progreso
+                        local progress = obj:GetAttribute("Progress") or 0
+                        if progress < 1 then progress = progress * 100 end
+                        
+                        if progress < 100 then
+                            local increment = 20 * (repairBoostValues[repairBoostLevel] / 5.0)
+                            obj:SetAttribute("Progress", math.min(100, progress + increment))
+                        end
+                        
+                        break
+                    end
+                end
+            end
+        end
+    end
+    
+    return {
+        start = function()
+            if boostLoop then return end
+            boostActive = true
+            
+            boostLoop = RunService.Heartbeat:Connect(function()
+                pcall(applyDetectedPerkBoost)
+            end)
+        end,
+        
+        stop = function()
+            if boostLoop then
+                boostLoop:Disconnect()
+                boostLoop = nil
+            end
+            boostActive = false
+        end
+    }
+end
+
+-- ============================================
 -- 18. SISTEMA ANTI-STUN (KILLER TAB)
 -- ============================================
 

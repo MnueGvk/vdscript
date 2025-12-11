@@ -180,7 +180,7 @@ local Window = Rayfield:CreateWindow({
     Name = "LoreOnTop",
     LoadingTitle = "Violence District",
     LoadingSubtitle = "Hecho por kcha abuelas3000",
-    ConfigurationSaving = {Enabled = true, FolderName = "ESP_Suite", FileName = "esp_config"},
+    ConfigurationSaving = {Enabled = false, FolderName = "ESP_Suite", FileName = "esp_config"},
     KeySystem = false
 })
 
@@ -743,46 +743,24 @@ local speedBoostValues = {1.05, 1.1, 1.2, 1.3, 1.4, 1.5}
 local speedBoostConnection = nil
 local originalWalkspeed = 16
 local characterAddedConnection = nil
-local isJumpingWindowOrPallet = false
-local jumpStartTime = 0
-local JUMP_COOLDOWN = 0.5
+local isInVaultAnimation = false
+local lastAnimationCheck = 0
 
--- Detectar si está saltando ventana/pallet
-local function detectWindowOrPalletJump()
+-- Detectar si está en animación de vault (ventana/pallet)
+local function checkVaultAnimation()
     local char = LP.Character
     if not char then return false end
     
     local humanoid = char:FindFirstChildOfClass("Humanoid")
     if not humanoid then return false end
     
-    -- Verificar por animaciones específicas
+    -- Verificar animaciones específicas de vault
     local animator = humanoid:FindFirstChildOfClass("Animator")
     if animator then
         for _, track in ipairs(animator:GetPlayingAnimationTracks()) do
             local animName = track.Animation.Name:lower()
-            if animName:find("vault") or animName:find("window") or 
-               animName:find("pallet") or animName:find("jump") then
+            if animName:find("Vault") or animName:find("Window") or animName:find("Pallet") then
                 return true
-            end
-        end
-    end
-    
-    -- Verificar por estado
-    local state = humanoid:GetState()
-    if state == Enum.HumanoidStateType.Jumping or state == Enum.HumanoidStateType.Freefall then
-        -- Verificar si hay un pallet o ventana cerca
-        local root = char:FindFirstChild("HumanoidRootPart")
-        if root then
-            for _, obj in ipairs(workspace:GetDescendants()) do
-                if obj:IsA("Model") then
-                    local name = obj.Name:lower()
-                    if (name:find("window") or name:find("pallet") or name:find("fence")) then
-                        local part = obj.PrimaryPart or obj:FindFirstChildWhichIsA("BasePart")
-                        if part and (root.Position - part.Position).Magnitude < 10 then
-                            return true
-                        end
-                    end
-                end
             end
         end
     end
@@ -790,66 +768,52 @@ local function detectWindowOrPalletJump()
     return false
 end
 
--- Función mejorada para aplicar speed boost
-local function applySmartSpeedBoost()
+-- Función para aplicar el speed boost
+local function applySpeedBoost()
     local char = LP.Character
-    if not char then return end
-    
-    local humanoid = char:FindFirstChildOfClass("Humanoid")
-    if not humanoid then return end
-    
-    -- Guardar velocidad original
-    if originalWalkspeed == 16 then
-        originalWalkspeed = humanoid.WalkSpeed
-    end
-    
-    -- Detectar si está saltando ventana/pallet
-    local isCurrentlyJumping = detectWindowOrPalletJump()
-    
-    if isCurrentlyJumping then
-        jumpStartTime = tick()
-        isJumpingWindowOrPallet = true
-    elseif tick() - jumpStartTime > JUMP_COOLDOWN then
-        isJumpingWindowOrPallet = false
-    end
-    
-    if speedBoostEnabled and not isJumpingWindowOrPallet then
-        -- Aplicar boost NORMALMENTE (cuando NO está saltando)
-        local boostMultiplier = speedBoostValues[speedBoostLevel] or 1.05
-        local newSpeed = originalWalkspeed * boostMultiplier
-        
-        humanoid.WalkSpeed = newSpeed
-        
-        pcall(function()
-            char:SetAttribute("speedboost", boostMultiplier)
-            char:SetAttribute("IsRunning", true)
-        end)
-        
-    elseif isJumpingWindowOrPallet then
-        -- Durante salto de ventana/pallet, mantener velocidad NORMAL
-        humanoid.WalkSpeed = originalWalkspeed
-        
-        -- Asegurar que puede saltar
-        humanoid.Jump = true
-        humanoid.AutoJumpEnabled = true
-        
-        pcall(function()
-            char:SetAttribute("speedboost", nil)
-            char:SetAttribute("IsRunning", false)
-        end)
-        
-    else
-        -- Speed boost desactivado
-        humanoid.WalkSpeed = originalWalkspeed
-        
-        pcall(function()
-            char:SetAttribute("speedboost", nil)
-            char:SetAttribute("IsRunning", false)
-        end)
+    if char then
+        local humanoid = char:FindFirstChildOfClass("Humanoid")
+        if humanoid then
+            if originalWalkspeed == 16 then
+                originalWalkspeed = humanoid.WalkSpeed
+            end
+            
+            local currentTime = tick()
+            if currentTime - lastAnimationCheck > 1 then
+                isInVaultAnimation = checkVaultAnimation()
+                lastAnimationCheck = currentTime
+            end
+            
+            if speedBoostEnabled then
+                local boostMultiplier = speedBoostValues[speedBoostLevel] or 1.05
+                local newSpeed = originalWalkspeed * boostMultiplier
+                
+                -- Si está en animación de vault, usar velocidad normal
+                if isInVaultAnimation then
+                    humanoid.WalkSpeed = originalWalkspeed
+                else
+                    humanoid.WalkSpeed = newSpeed
+                end
+                
+                pcall(function()
+                    char:SetAttribute("speedboost", boostMultiplier)
+                    char:SetAttribute("gp_applied_by", LP.UserId)
+                    char:SetAttribute("IsRunning", true)
+                end)
+            else
+                humanoid.WalkSpeed = originalWalkspeed
+                
+                pcall(function()
+                    char:SetAttribute("speedboost", nil)
+                    char:SetAttribute("gp_applied_by", nil)
+                    char:SetAttribute("IsRunning", false)
+                end)
+            end
+        end
     end
 end
 
--- Función para mantener el boost
+-- Función para mantener el boost activo
 local function maintainSpeedBoost()
     if speedBoostConnection then
         speedBoostConnection:Disconnect()
@@ -857,10 +821,10 @@ local function maintainSpeedBoost()
     
     speedBoostConnection = RunService.Heartbeat:Connect(function()
         if not speedBoostEnabled then return end
-        applySmartSpeedBoost()
+        applySpeedBoost()
     end)
     
-    applySmartSpeedBoost()
+    applySpeedBoost()
 end
 
 -- Función para limpiar
@@ -884,12 +848,13 @@ local function cleanupSpeedBoost()
         
         pcall(function()
             char:SetAttribute("speedboost", nil)
+            char:SetAttribute("gp_applied_by", nil)
             char:SetAttribute("IsRunning", false)
         end)
     end
     
-    isJumpingWindowOrPallet = false
-    jumpStartTime = 0
+    isInVaultAnimation = false
+    lastAnimationCheck = 0
 end
 
 -- Sección Speed Boost
@@ -923,7 +888,7 @@ SurvivorTab:CreateToggle({
                         local humanoid = char:FindFirstChildOfClass("Humanoid")
                         if humanoid then
                             originalWalkspeed = humanoid.WalkSpeed
-                            applySmartSpeedBoost()
+                            applySpeedBoost()
                         end
                     end
                 end
@@ -945,7 +910,7 @@ SurvivorTab:CreateSlider({
         speedBoostLevel = math.floor(v)
         
         if speedBoostEnabled then
-            applySmartSpeedBoost()
+            applySpeedBoost()
         end
     end
 })

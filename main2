@@ -881,21 +881,28 @@ SurvivorTab:CreateSlider({
 -- 13. SISTEMA PARA GENERATOR BOOST (SURVIVOR TAB)
 -- ============================================
 
+-- ============================================
+-- SISTEMA GENERATOR BOOST MEJORADO (SURVIVOR TAB)
+-- ============================================
+
+-- Configuración del Generator Boost
 local repairBoostEnabled = false
-local repairBoostLevel = 1
+local repairBoostLevel = 11  -- Por defecto nivel máximo para máxima velocidad
 local repairBoostValues = {
-    [1] = 1.05,
-    [2] = 1.10,
-    [3] = 1.20,
-    [4] = 1.30,
-    [5] = 1.40,
-    [6] = 1.50,
-    [7] = 1.60,
-    [8] = 1.70,
-    [9] = 1.80,
-    [10] = 1.90,
-    [11] = 2.00
+    [1] = 2.00,   -- 2x más rápido
+    [2] = 3.00,   -- 3x más rápido
+    [3] = 5.00,   -- 5x más rápido
+    [4] = 8.00,   -- 8x más rápido
+    [5] = 12.00,  -- 12x más rápido
+    [6] = 18.00,  -- 18x más rápido
+    [7] = 25.00,  -- 25x más rápido
+    [8] = 35.00,  -- 35x más rápido
+    [9] = 50.00,  -- 50x más rápido
+    [10] = 75.00, -- 75x más rápido
+    [11] = 100.00 -- 100x más rápido (MÁXIMO)
 }
+
+-- Variables del sistema
 local repairBoostConnection = nil
 local originalRemoteFunctions = {}
 local interceptedRemotes = {}
@@ -903,82 +910,144 @@ local isRepairBoostActive = false
 local lastAppliedBoost = 0
 local repairMaintenanceConnection = nil
 local lastGeneratorUpdate = 0
-local GENERATOR_UPDATE_INTERVAL = 0.3
+local GENERATOR_UPDATE_INTERVAL = 0.1  -- 10 veces por segundo (más rápido)
+local repairRemote = nil
+local characterRepairingConnection = nil
 
--- Función para aplicar atributos
+-- ============ FUNCIONES PRINCIPALES ============
+
+-- Función para encontrar el RemoteEvent de reparación
+local function findRepairRemote()
+    if repairRemote then return repairRemote end
+    
+    -- Buscar en ubicaciones comunes
+    local searchPaths = {
+        "Remotes.Generator.RepairEvent",
+        "Remotes.Generator.Repair",
+        "Remotes.RepairEvent",
+        "Generator.Remotes.Repair",
+        "Events.Generator.Repair"
+    }
+    
+    for _, path in ipairs(searchPaths) do
+        local obj = game:GetService("ReplicatedStorage")
+        for part in path:gmatch("[^%.]+") do
+            obj = obj:FindFirstChild(part)
+            if not obj then break end
+        end
+        if obj and obj:IsA("RemoteEvent") then
+            repairRemote = obj
+            return repairRemote
+        end
+    end
+    
+    -- Búsqueda exhaustiva
+    for _, obj in ipairs(game:GetDescendants()) do
+        if obj:IsA("RemoteEvent") then
+            local nameLower = obj.Name:lower()
+            if nameLower:find("repair") or nameLower:find("generator") or 
+               nameLower:find("progress") or nameLower:find("fix") then
+                repairRemote = obj
+                return repairRemote
+            end
+        end
+    end
+    
+    return nil
+end
+
+-- Función para aplicar atributos de boost al personaje
 local function applyRepairBoostToCharacter()
     if not repairBoostEnabled or not LP.Character then return end
     
-    local boostMultiplier = repairBoostValues[repairBoostLevel] or 1.50
+    local boostMultiplier = repairBoostValues[repairBoostLevel] or 100.00
     
     pcall(function()
         LP.Character:SetAttribute("repairboost", boostMultiplier)
+        LP.Character:SetAttribute("repair_speed", boostMultiplier)
         LP.Character:SetAttribute("gp_applied_by", LP.UserId)
         LP.Character:SetAttribute("GroupProject", 3)
+        LP.Character:SetAttribute("FastRepair", true)
     end)
     
     lastAppliedBoost = repairBoostLevel
     isRepairBoostActive = true
 end
 
--- Función para interceptar remotes
+-- Función para interceptar RemoteEvents de reparación
 local function interceptRepairRemotes()
+    -- Limpiar interceptaciones anteriores
     for obj, originalFunc in pairs(originalRemoteFunctions) do
-        if obj and obj.Parent then
-            if obj:IsA("RemoteEvent") and originalFunc then
-                pcall(function() 
-                    obj.OnClientEvent = originalFunc 
-                end)
-            end
+        if obj and obj.Parent and originalFunc then
+            pcall(function() 
+                if obj:IsA("RemoteEvent") then
+                    obj.OnClientEvent = originalFunc
+                elseif obj:IsA("RemoteFunction") then
+                    obj.OnClientInvoke = originalFunc
+                end
+            end)
         end
     end
     originalRemoteFunctions = {}
     interceptedRemotes = {}
     
-    -- Buscar "Generator.RepairEvent"
-    local repairEvent = ReplicatedStorage:FindFirstChild("Remotes")
-    if repairEvent then
-        repairEvent = repairEvent:FindFirstChild("Generator")
-        if repairEvent then
-            repairEvent = repairEvent:FindFirstChild("RepairEvent")
-        end
-    end
-    
-    if repairEvent and repairEvent:IsA("RemoteEvent") then
-        if not interceptedRemotes[repairEvent] then
-            interceptedRemotes[repairEvent] = true
-            local originalHandler = repairEvent.OnClientEvent
+    -- Buscar y interceptar remotes específicos
+    local remote = findRepairRemote()
+    if remote and remote:IsA("RemoteEvent") then
+        if not interceptedRemotes[remote] then
+            interceptedRemotes[remote] = true
+            local originalHandler = remote.OnClientEvent
             
-            originalRemoteFunctions[repairEvent] = originalHandler
+            originalRemoteFunctions[remote] = originalHandler
             
-            repairEvent.OnClientEvent = function(...)
+            remote.OnClientEvent = function(...)
+                local args = {...}
+                
                 if repairBoostEnabled then
-                    local args = {...}
-                    local boostMultiplier = repairBoostValues[repairBoostLevel] or 1.50
+                    local boostMultiplier = repairBoostValues[repairBoostLevel] or 100.00
                     
+                    -- Modificar argumentos para acelerar la reparación
                     if #args >= 2 then
                         local generator = args[1]
                         local progress = args[2]
                         
                         if type(progress) == "number" then
-                            args[2] = progress * boostMultiplier
+                            -- Aumentar el progreso exponencialmente
+                            local newProgress = progress * boostMultiplier
+                            args[2] = math.min(100, newProgress)
+                            
+                            -- También forzar atributos del generador
+                            pcall(function()
+                                generator:SetAttribute("Progress", args[2])
+                                generator:SetAttribute("progress", args[2])
+                                generator:SetAttribute("CurrentProgress", args[2])
+                                
+                                -- Forzar actualización visual
+                                if generator:FindFirstChild("Progress") then
+                                    generator.Progress.Value = args[2]
+                                end
+                            end)
                         end
                     end
                     
+                    -- Llamar al handler original con los args modificados
                     if originalHandler then
                         return originalHandler(unpack(args))
                     end
                 else
+                    -- Si el boost está desactivado, usar el handler original sin modificar
                     if originalHandler then
                         return originalHandler(...)
                     end
                 end
             end
+            
+            print("[Generator Boost] Remote interceptado:", remote:GetFullName())
         end
     end
 end
 
--- Función para aumentar el progreso directamente
+-- Función principal para aumentar el progreso de generadores
 local function increaseGeneratorProgress()
     if not repairBoostEnabled then return end
     
@@ -986,52 +1055,134 @@ local function increaseGeneratorProgress()
     if currentTime - lastGeneratorUpdate < GENERATOR_UPDATE_INTERVAL then return end
     lastGeneratorUpdate = currentTime
     
-    local boostMultiplier = repairBoostValues[repairBoostLevel] or 1.50
+    local boostMultiplier = repairBoostValues[repairBoostLevel] or 100.00
     local char = LP.Character
     if not char then return end
     
+    -- Verificar si el personaje está reparando
+    local isRepairing = char:GetAttribute("IsRepairing") or 
+                       char:GetAttribute("Repairing") or false
+    
+    if not isRepairing then return end
+    
+    -- Buscar todos los generadores
     for _, generator in ipairs(workspace:GetDescendants()) do
-        if generator:IsA("Model") and generator.Name:lower():find("generator") then
+        if generator:IsA("Model") and (generator.Name:lower():find("generator") or 
+           generator:GetAttribute("IsGenerator") == true) then
             
             pcall(function()
-                local beingRepaired = false
-                local repairers = generator:GetAttribute("Repairers") or {}
+                -- Verificar si este jugador está reparando este generador
+                local beingRepairedBy = generator:GetAttribute("BeingRepairedBy")
+                local repairers = generator:GetAttribute("Repairers")
+                local isPlayerRepairing = false
                 
-                if type(repairers) == "table" then
+                if beingRepairedBy == LP.UserId then
+                    isPlayerRepairing = true
+                elseif type(repairers) == "table" then
                     for _, playerId in pairs(repairers) do
                         if playerId == LP.UserId then
-                            beingRepaired = true
+                            isPlayerRepairing = true
                             break
                         end
                     end
                 end
                 
-                if not beingRepaired then
-                    beingRepaired = generator:GetAttribute("BeingRepairedBy") == LP.UserId
-                end
-                
-                if beingRepaired then
+                if isPlayerRepairing then
+                    -- Obtener progreso actual
                     local currentProgress = generator:GetAttribute("Progress") or 
-                                          generator:GetAttribute("progress") or 0
+                                          generator:GetAttribute("progress") or 
+                                          generator:GetAttribute("CurrentProgress") or 0
                     
                     if type(currentProgress) == "number" and currentProgress < 100 then
-                        local increment = 90 * boostMultiplier
-                        local newProgress = math.min(100, currentProgress + increment)
+                        -- CALCULAR INCREMENTO MUY RÁPIDO
+                        local baseIncrement = 5  -- Incremento base por tick
+                        local actualIncrement = baseIncrement * boostMultiplier
+                        local newProgress = math.min(100, currentProgress + actualIncrement)
                         
+                        -- Actualizar atributos del generador
                         generator:SetAttribute("Progress", newProgress)
                         generator:SetAttribute("progress", newProgress)
+                        generator:SetAttribute("CurrentProgress", newProgress)
                         
-                        local repairEvent = ReplicatedStorage:FindFirstChild("Remotes")
-                        if repairEvent then
-                            repairEvent = repairEvent:FindFirstChild("Generator")
-                            if repairEvent then
-                                repairEvent = repairEvent:FindFirstChild("RepairEvent")
-                                if repairEvent and repairEvent:IsA("RemoteEvent") then
-                                    pcall(function()
-                                        repairEvent:FireServer(generator, newProgress)
-                                    end)
+                        -- Actualizar valores hijos si existen
+                        if generator:FindFirstChild("Progress") then
+                            generator.Progress.Value = newProgress
+                        end
+                        if generator:FindFirstChild("CurrentProgress") then
+                            generator.CurrentProgress.Value = newProgress
+                        end
+                        
+                        -- Enviar evento de reparación acelerada
+                        local remote = findRepairRemote()
+                        if remote then
+                            -- Enviar múltiples veces para asegurar
+                            for i = 1, 3 do
+                                pcall(function()
+                                    remote:FireServer(generator, newProgress)
+                                    remote:FireServer(generator, "Repair", newProgress)
+                                    remote:FireServer(generator, "Progress", newProgress)
+                                end)
+                                task.wait(0.01)
+                            end
+                        end
+                        
+                        -- Forzar actualización visual inmediata
+                        task.spawn(function()
+                            -- Actualizar highlights si existen
+                            local highlight = generator:FindFirstChild("Generator_Highlight")
+                            if highlight then
+                                local color
+                                if newProgress >= 100 then 
+                                    color = Color3.fromRGB(0, 255, 0)
+                                elseif newProgress >= 70 then 
+                                    color = Color3.fromRGB(100, 255, 100)
+                                elseif newProgress >= 40 then 
+                                    color = Color3.fromRGB(255, 255, 0)
+                                else 
+                                    color = Color3.fromRGB(255, 50, 50)
+                                end
+                                
+                                highlight.FillColor = color
+                                highlight.OutlineColor = color
+                                highlight.Enabled = true
+                            end
+                            
+                            -- Actualizar billboard si existe
+                            local basePart = generator.PrimaryPart or generator:FindFirstChildWhichIsA("BasePart")
+                            if basePart and basePart:FindFirstChild("Generator_Tag") then
+                                local tag = basePart.Generator_Tag
+                                local label = tag:FindFirstChild("Label")
+                                if label then
+                                    label.Text = string.format("%.0f%%", newProgress)
+                                    if newProgress >= 100 then
+                                        label.TextColor3 = Color3.fromRGB(0, 255, 0)
+                                    end
                                 end
                             end
+                        end)
+                        
+                        -- Si el generador está completo, notificar
+                        if newProgress >= 100 then
+                            print("[Generator Boost] Generador completado al 100%")
+                            
+                            -- Forzar evento de completado
+                            pcall(function()
+                                generator:SetAttribute("Completed", true)
+                                generator:SetAttribute("Repaired", true)
+                                generator:SetAttribute("Active", false)
+                                
+                                -- Enviar evento de completado
+                                local completeRemote = game:GetService("ReplicatedStorage"):FindFirstChild("Remotes")
+                                if completeRemote then
+                                    completeRemote = completeRemote:FindFirstChild("Generator")
+                                    if completeRemote then
+                                        completeRemote = completeRemote:FindFirstChild("CompleteEvent")
+                                        if completeRemote and completeRemote:IsA("RemoteEvent") then
+                                            completeRemote:FireServer(generator)
+                                        end
+                                    end
+                                end
+                            end)
                         end
                     end
                 end
@@ -1040,45 +1191,127 @@ local function increaseGeneratorProgress()
     end
 end
 
+-- Función para monitorear cuando el personaje empieza a reparar
+local function monitorRepairingState()
+    if characterRepairingConnection then
+        characterRepairingConnection:Disconnect()
+    end
+    
+    characterRepairingConnection = RunService.Heartbeat:Connect(function()
+        if not repairBoostEnabled then return end
+        
+        local char = LP.Character
+        if not char then return end
+        
+        -- Detectar si está reparando por animaciones
+        local humanoid = char:FindFirstChildOfClass("Humanoid")
+        if humanoid then
+            local animator = humanoid:FindFirstChildOfClass("Animator")
+            if animator then
+                for _, track in ipairs(animator:GetPlayingAnimationTracks()) do
+                    local animName = track.Animation.Name:lower()
+                    if animName:find("repair") or animName:find("fix") or animName:find("tool") then
+                        if not char:GetAttribute("IsRepairing") then
+                            char:SetAttribute("IsRepairing", true)
+                            print("[Generator Boost] Detectada animación de reparación")
+                        end
+                        break
+                    end
+                end
+            end
+        end
+        
+        -- Detectar por tool equipado
+        local tool = char:FindFirstChildOfClass("Tool")
+        if tool then
+            local toolName = tool.Name:lower()
+            if toolName:find("tool") or toolName:find("wrench") or toolName:find("repair") then
+                if not char:GetAttribute("IsRepairing") then
+                    char:SetAttribute("IsRepairing", true)
+                    print("[Generator Boost] Tool de reparación detectado")
+                end
+            end
+        end
+    end)
+end
 
--- Función para limpiar
+-- Función para iniciar el mantenimiento del boost
+local function startRepairBoostMaintenance()
+    if repairMaintenanceConnection then
+        repairMaintenanceConnection:Disconnect()
+    end
+    
+    -- Aplicar boost inmediatamente
+    applyRepairBoostToCharacter()
+    interceptRepairRemotes()
+    monitorRepairingState()
+    
+    -- Conexión principal de heartbeat
+    repairMaintenanceConnection = RunService.Heartbeat:Connect(function(deltaTime)
+        if not repairBoostEnabled then return end
+        
+        -- Aplicar atributos cada frame
+        applyRepairBoostToCharacter()
+        
+        -- Actualizar progreso de generadores
+        increaseGeneratorProgress()
+        
+        -- Forzar interceptación de remotes periódicamente
+        if tick() - lastAppliedBoost > 5 then
+            interceptRepairRemotes()
+            lastAppliedBoost = tick()
+        end
+    end)
+    
+    print("[Generator Boost] Sistema iniciado - Nivel:", repairBoostLevel, "Multiplicador:", repairBoostValues[repairBoostLevel])
+end
+
+-- Función para limpiar todo
 local function cleanupBoostAttributes()
     if repairMaintenanceConnection then
         repairMaintenanceConnection:Disconnect()
         repairMaintenanceConnection = nil
     end
     
+    if characterRepairingConnection then
+        characterRepairingConnection:Disconnect()
+        characterRepairingConnection = nil
+    end
+    
+    -- Restaurar RemoteEvents originales
     for obj, originalFunc in pairs(originalRemoteFunctions) do
         if obj and obj.Parent and originalFunc then
             pcall(function()
-                obj.OnClientEvent = originalFunc
+                if obj:IsA("RemoteEvent") then
+                    obj.OnClientEvent = originalFunc
+                elseif obj:IsA("RemoteFunction") then
+                    obj.OnClientInvoke = originalFunc
+                end
             end)
         end
     end
     originalRemoteFunctions = {}
     interceptedRemotes = {}
     
+    -- Limpiar atributos del personaje
+    local char = LP.Character
+    if char then
+        pcall(function()
+            char:SetAttribute("repairboost", nil)
+            char:SetAttribute("repair_speed", nil)
+            char:SetAttribute("gp_applied_by", nil)
+            char:SetAttribute("GroupProject", nil)
+            char:SetAttribute("FastRepair", nil)
+            char:SetAttribute("IsRepairing", false)
+        end)
+    end
+    
     isRepairBoostActive = false
     lastAppliedBoost = 0
     lastGeneratorUpdate = 0
-end
-
--- Iniciar sistema
-local function startRepairBoostMaintenance()
-    if repairMaintenanceConnection then
-        repairMaintenanceConnection:Disconnect()
-    end
+    repairRemote = nil
     
-    repairMaintenanceConnection = RunService.Heartbeat:Connect(function()
-        applyRepairBoostToCharacter()
-        
-        local currentTime = tick()
-        if currentTime - lastGeneratorUpdate >= GENERATOR_UPDATE_INTERVAL then
-            increaseGeneratorProgress()
-        end
-    end)
-    
-    interceptRepairRemotes()
+    print("[Generator Boost] Sistema limpiado")
 end
 
 -- Sección Generator Boost
@@ -1092,13 +1325,21 @@ SurvivorTab:CreateToggle({
         repairBoostEnabled = v
         
         if v then
+            -- Limpiar sistema anterior
             cleanupBoostAttributes()
+            
+            -- Iniciar nuevo sistema
             startRepairBoostMaintenance()
             
+            -- Configurar para máximo rendimiento
+            repairBoostLevel = 1
+
+            -- Reconectar cuando cambie el personaje
             LP.CharacterAdded:Connect(function()
-                task.wait(1)
+                task.wait(1.5)
                 if repairBoostEnabled then
                     cleanupBoostAttributes()
+                    task.wait(0.5)
                     startRepairBoostMaintenance()
                 end
             end)
@@ -1110,20 +1351,48 @@ SurvivorTab:CreateToggle({
 })
 
 SurvivorTab:CreateSlider({
-    Name = "Nivel Generator Boost",
+    Name = "Nivel de Velocidad",
     Range = {1, 11},
     Increment = 1,
-    CurrentValue = repairBoostLevel,
+    CurrentValue = 1,
     Flag = "GeneratorBoostLevel",
     Callback = function(v)
-        repairBoostLevel = math.floor(v)
+        local newLevel = math.floor(v)
+        repairBoostLevel = newLevel
         
         if repairBoostEnabled then
+            -- Reiniciar para aplicar nuevo nivel
             lastAppliedBoost = 0
         end
     end
 })
 
+-- Botón de prueba/forzar
+SurvivorTab:CreateButton({
+    Name = "🔧 Forzar Reparación Rápida",
+    Callback = function()
+        if not repairBoostEnabled then
+            return
+        end
+        
+        -- Forzar reparación en todos los generadores
+        for _, generator in ipairs(workspace:GetDescendants()) do
+            if generator:IsA("Model") and generator.Name:lower():find("generator") then
+                pcall(function()
+                    generator:SetAttribute("Progress", 100)
+                    generator:SetAttribute("progress", 100)
+                    generator:SetAttribute("CurrentProgress", 100)
+                    
+                    -- Enviar evento de completado
+                    local remote = findRepairRemote()
+                    if remote then
+                        remote:FireServer(generator, 100)
+                    end
+                end)
+            end
+        end
+    end
+})
 
 -- ============================================
 -- 14. SISTEMA PERFECT SKILLCHECK (SURVIVOR TAB)
@@ -2432,19 +2701,19 @@ KillerTab:CreateToggle({
 local hitboxExpanderEnabled = false
 local hitboxSize = 15
 local hitboxTransparency = 0.6
-local hitboxColor = Color3.fromRGB(0, 255, 0)
+local hitboxColor = Color3.fromRGB(0, 255, 0)  -- SOLO VERDE
 local originalSizes = {}
 local hitboxConnections = {}
 local damageRemote = nil
 
--- Configuración visualización
+-- Sistema de visualización UNIFICADO
 local showHitboxVisual = false
-local hitboxVisualObjects = {}
-local hitboxVisualConnections = {}
-local hitboxVisualLoopConnection = nil
+local hitboxSpheres = {}
 local hitboxLoopConnection = nil
+local lastHitboxUpdate = 0
+local HITBOX_UPDATE_INTERVAL = 0.05
 
--- ============ FUNCIONES HITBOX EXPANDER ============
+-- ============ FUNCIONES HITBOX EXPANDER MEJORADAS ============
 
 local function getDamageRemote()
     if damageRemote then return damageRemote end
@@ -2467,74 +2736,115 @@ local function applyDamageToPlayer(targetPlayer)
     
     local remote = getDamageRemote()
     if remote then
-        local success = pcall(function()
-            remote:FireServer(targetPlayer.Character, "Hit", 1)
-        end)
-        
-        if not success then
-            pcall(function()
-                remote:FireServer(targetPlayer.Character)
-            end)
-        end
-    else
         pcall(function()
-            local humanoid = targetPlayer.Character:FindFirstChildOfClass("Humanoid")
-            if humanoid then
-                humanoid.Health = humanoid.Health - 30
-            end
+            remote:FireServer(targetPlayer.Character, "Hit", 50)  -- Más daño
         end)
     end
 end
 
+-- FUNCIÓN MEJORADA: Aplica hitbox expander SIN duplicar objetos
 local function applyHitboxExpander()
     if not hitboxExpanderEnabled then return end
+    
+    local myChar = LP.Character
+    if not myChar then return end
+    
+    local myRoot = myChar:FindFirstChild("HumanoidRootPart")
+    if not myRoot then return end
+    
+    -- Limpiar esferas antiguas si showHitboxVisual está desactivado
+    if not showHitboxVisual then
+        for _, sphere in pairs(hitboxSpheres) do
+            if sphere and sphere.Parent then
+                sphere:Destroy()
+            end
+        end
+        hitboxSpheres = {}
+    end
     
     for _, player in ipairs(Players:GetPlayers()) do
         if player ~= LP and player.Character then
             local head = player.Character:FindFirstChild("Head")
-            if head then
+            local targetRoot = player.Character:FindFirstChild("HumanoidRootPart")
+            
+            if head and targetRoot then
+                -- Guardar tamaño original solo la primera vez
                 if not originalSizes[head] then
                     originalSizes[head] = {
                         Size = head.Size,
                         Transparency = head.Transparency,
                         CanCollide = head.CanCollide,
-                        Massless = head.Massless,
-                        Color = head.Color
+                        Color = head.Color,
+                        Material = head.Material
                     }
                 end
                 
+                -- Aplicar hitbox expander
                 head.Size = Vector3.new(hitboxSize, hitboxSize, hitboxSize)
-                head.Transparency = 1.0
+                head.Transparency = 1.0  -- Completamente transparente
                 head.CanCollide = false
-                head.Massless = true
-                head.Color = hitboxColor
+                head.Color = hitboxColor  -- SOLO VERDE
                 head.Material = Enum.Material.Neon
-
-pcall(function()
-for _, child in ipairs(head:GetChildren()) do
-if child:IsA("Decal") or child:IsA("SpecialMesh") then
-child.Transparency = 1.0
-end
-end
-end)
-
-                local myChar = LP.Character
-                if myChar then
-                    local myRoot = myChar:FindFirstChild("HumanoidRootPart")
-                    local targetRoot = player.Character:FindFirstChild("HumanoidRootPart")
-                    
-                    if myRoot and targetRoot then
-                        local distance = (myRoot.Position - targetRoot.Position).Magnitude
-                        if distance <= hitboxSize * 1.5 then
-                            applyDamageToPlayer(player)
+                
+                -- Hacer decals transparentes
+                pcall(function()
+                    for _, child in ipairs(head:GetChildren()) do
+                        if child:IsA("Decal") or child:IsA("SpecialMesh") then
+                            child.Transparency = 1.0
                         end
                     end
+                end)
+                
+                -- Crear esfera visual SOLO si está habilitado
+                if showHitboxVisual then
+                    if not hitboxSpheres[player] then
+                        local sphere = Instance.new("Part")
+                        sphere.Name = "HitboxSphere_" .. player.Name
+                        sphere.Shape = Enum.PartType.Ball
+                        sphere.Size = Vector3.new(hitboxSize, hitboxSize, hitboxSize)
+                        sphere.Transparency = hitboxTransparency
+                        sphere.Color = hitboxColor  -- SOLO VERDE
+                        sphere.Material = Enum.Material.Neon
+                        sphere.CanCollide = false
+                        sphere.Anchored = true
+                        sphere.Parent = workspace
+                        
+                        hitboxSpheres[player] = sphere
+                    end
+                    
+                    -- Actualizar posición y tamaño de la esfera
+                    local sphere = hitboxSpheres[player]
+                    if sphere then
+                        sphere.Size = Vector3.new(hitboxSize, hitboxSize, hitboxSize)
+                        sphere.CFrame = head.CFrame
+                        sphere.Color = hitboxColor
+                        sphere.Transparency = hitboxTransparency
+                    end
+                else
+                    -- Limpiar esfera si no se muestra
+                    if hitboxSpheres[player] then
+                        hitboxSpheres[player]:Destroy()
+                        hitboxSpheres[player] = nil
+                    end
                 end
+                
+                -- Verificar daño por proximidad
+                local distance = (myRoot.Position - targetRoot.Position).Magnitude
+                if distance <= hitboxSize * 1.2 then  -- Rango ligeramente mayor
+                    applyDamageToPlayer(player)
+                end
+            end
+        else
+            -- Limpiar hitbox si el jugador ya no existe
+            if hitboxSpheres[player] then
+                hitboxSpheres[player]:Destroy()
+                hitboxSpheres[player] = nil
             end
         end
     end
 end
 
+-- FUNCIÓN MEJORADA: Restaurar hitboxes originales
 local function restoreOriginalHitboxes()
     for part, data in pairs(originalSizes) do
         if part and part.Parent then
@@ -2542,60 +2852,64 @@ local function restoreOriginalHitboxes()
                 part.Size = data.Size
                 part.Transparency = data.Transparency
                 part.CanCollide = data.CanCollide
-                part.Massless = data.Massless
                 part.Color = data.Color
-                part.Material = Enum.Material.Plastic
+                part.Material = data.Material or Enum.Material.Plastic
+                
+                -- Restaurar decals
+                for _, child in ipairs(part:GetChildren()) do
+                    if child:IsA("Decal") or child:IsA("SpecialMesh") then
+                        child.Transparency = data.Transparency
+                    end
+                end
             end)
         end
     end
     originalSizes = {}
-end
-
-local function setupPlayerMonitoring()
-    for _, conn in ipairs(hitboxConnections) do
-        conn:Disconnect()
-    end
-    hitboxConnections = {}
     
-    local playerAddedConn = Players.PlayerAdded:Connect(function(player)
-        player.CharacterAdded:Connect(function(character)
-            task.wait(1)
-            if hitboxExpanderEnabled then
-                local head = character:FindFirstChild("Head")
-                if head and originalSizes[head] then
-                    originalSizes[head] = nil
-                end
-            end
-        end)
-    end)
-    table.insert(hitboxConnections, playerAddedConn)
-    
-    for _, player in ipairs(Players:GetPlayers()) do
-        if player ~= LP then
-            local charConn = player.CharacterAdded:Connect(function(character)
-                task.wait(1)
-                if hitboxExpanderEnabled then
-                    local head = character:FindFirstChild("Head")
-                    if head and originalSizes[head] then
-                        originalSizes[head] = nil
-                    end
-                end
-            end)
-            table.insert(hitboxConnections, charConn)
+    -- Limpiar todas las esferas visuales
+    for _, sphere in pairs(hitboxSpheres) do
+        if sphere and sphere.Parent then
+            sphere:Destroy()
         end
     end
+    hitboxSpheres = {}
 end
+
+-- ============ SISTEMA ACTUALIZADO ============
 
 local function startHitboxExpander()
     if hitboxLoopConnection then
         hitboxLoopConnection:Disconnect()
     end
     
-    hitboxLoopConnection = RunService.RenderStepped:Connect(function()
-        applyHitboxExpander()
+    hitboxLoopConnection = RunService.Heartbeat:Connect(function(deltaTime)
+        lastHitboxUpdate = lastHitboxUpdate + deltaTime
+        if lastHitboxUpdate >= HITBOX_UPDATE_INTERVAL then
+            applyHitboxExpander()
+            lastHitboxUpdate = 0
+        end
     end)
     
-    setupPlayerMonitoring()
+    -- Conexiones para monitorear jugadores
+    for _, player in ipairs(Players:GetPlayers()) do
+        if player ~= LP then
+            local conn = player.CharacterAdded:Connect(function(character)
+                task.wait(1)
+                if hitboxExpanderEnabled then
+                    -- Limpiar cache para el nuevo personaje
+                    local head = character:FindFirstChild("Head")
+                    if head and originalSizes[head] then
+                        originalSizes[head] = nil
+                    end
+                    if hitboxSpheres[player] then
+                        hitboxSpheres[player]:Destroy()
+                        hitboxSpheres[player] = nil
+                    end
+                end
+            end)
+            table.insert(hitboxConnections, conn)
+        end
+    end
 end
 
 local function stopHitboxExpander()
@@ -2612,149 +2926,6 @@ local function stopHitboxExpander()
     hitboxConnections = {}
 end
 
--- ============ FUNCIONES VISUALIZACIÓN HITBOX ============
-
-local function createHitboxVisual(player)
-    if not player or not player.Character or hitboxVisualObjects[player] then return end
-    
-    local character = player.Character
-    local head = character:FindFirstChild("Head")
-    if not head then return end
-    
-    if not originalSizes[head] then return end
-    
-    local hitboxSphere = Instance.new("Part")
-    hitboxSphere.Name = "HitboxVisual"
-    hitboxSphere.Shape = Enum.PartType.Ball
-    hitboxSphere.Size = Vector3.new(hitboxSize, hitboxSize, hitboxSize)
-    hitboxSphere.Transparency = hitboxTransparency
-    hitboxSphere.Color = hitboxColor
-    hitboxSphere.Material = Enum.Material.Neon
-    hitboxSphere.CanCollide = false
-    hitboxSphere.CastShadow = false
-    hitboxSphere.Anchored = true
-    
-    hitboxVisualObjects[player] = {
-        sphere = hitboxSphere,
-        player = player
-    }
-    
-    hitboxVisualObjects[player].connection = RunService.Heartbeat:Connect(function()
-        if not character or not character.Parent or not head.Parent then
-            removeHitboxVisual(player)
-            return
-        end
-        
-        hitboxSphere.CFrame = head.CFrame
-        hitboxSphere.Size = Vector3.new(hitboxSize, hitboxSize, hitboxSize)
-        hitboxSphere.Color = hitboxColor
-        hitboxSphere.Transparency = hitboxTransparency
-    end)
-    
-    hitboxSphere.Parent = workspace
-end
-
-local function removeHitboxVisual(player)
-    if hitboxVisualObjects[player] then
-        local visualData = hitboxVisualObjects[player]
-        
-        if visualData.connection then
-            visualData.connection:Disconnect()
-        end
-        
-        if visualData.sphere and visualData.sphere.Parent then
-            visualData.sphere:Destroy()
-        end
-        
-        hitboxVisualObjects[player] = nil
-    end
-end
-
-local function updateAllHitboxVisuals()
-    if not showHitboxVisual then return end
-    
-    for _, player in ipairs(Players:GetPlayers()) do
-        if player ~= LP and player.Character then
-            local head = player.Character:FindFirstChild("Head")
-            if head and originalSizes[head] then
-                if not hitboxVisualObjects[player] then
-                    createHitboxVisual(player)
-                end
-            else
-                removeHitboxVisual(player)
-            end
-        else
-            removeHitboxVisual(player)
-        end
-    end
-end
-
-local function cleanupAllHitboxVisuals()
-    for player, _ in pairs(hitboxVisualObjects) do
-        removeHitboxVisual(player)
-    end
-    hitboxVisualObjects = {}
-    
-    for _, conn in ipairs(hitboxVisualConnections) do
-        conn:Disconnect()
-    end
-    hitboxVisualConnections = {}
-end
-
-local function startHitboxVisual()
-    if hitboxVisualLoopConnection then
-        hitboxVisualLoopConnection:Disconnect()
-    end
-    
-    hitboxVisualLoopConnection = RunService.Heartbeat:Connect(function()
-        updateAllHitboxVisuals()
-    end)
-    
-    local playerAddedConn = Players.PlayerAdded:Connect(function(player)
-        player.CharacterAdded:Connect(function()
-            task.wait(1)
-            if showHitboxVisual then
-                updateAllHitboxVisuals()
-            end
-        end)
-    end)
-    table.insert(hitboxVisualConnections, playerAddedConn)
-    
-    for _, player in ipairs(Players:GetPlayers()) do
-        if player ~= LP then
-            local charConn = player.CharacterAdded:Connect(function()
-                task.wait(1)
-                if showHitboxVisual then
-                    updateAllHitboxVisuals()
-                end
-            end)
-            table.insert(hitboxVisualConnections, charConn)
-        end
-    end
-end
-
-local function stopHitboxVisual()
-    if hitboxVisualLoopConnection then
-        hitboxVisualLoopConnection:Disconnect()
-        hitboxVisualLoopConnection = nil
-    end
-    
-    cleanupAllHitboxVisuals()
-end
-
--- Función para sincronizar visualización con hitbox expander
-local function syncHitboxVisualWithExpander()
-    if showHitboxVisual then
-        if hitboxExpanderEnabled then
-            updateAllHitboxVisuals()
-        else
-            cleanupAllHitboxVisuals()
-        end
-    end
-end
-
--- ============ INTERFAZ KILLERTAB ============
-
 KillerTab:CreateSection("Hitbox Expander (Survivors)")
 
 KillerTab:CreateToggle({
@@ -2766,15 +2937,13 @@ KillerTab:CreateToggle({
         
         if v then
             startHitboxExpander()
-            syncHitboxVisualWithExpander()
             Rayfield:Notify({
                 Title = "Hitbox Expander",
-                Content = "✅ Activado - Hitboxes verdes en survivors",
-                Duration = 3
+                Content = "✅ Activado - Hitboxes expandidas",
+                Duration = 3,
             })
         else
             stopHitboxExpander()
-            syncHitboxVisualWithExpander()
             Rayfield:Notify({
                 Title = "Hitbox Expander",
                 Content = "❌ Desactivado",
@@ -2784,10 +2953,33 @@ KillerTab:CreateToggle({
     end
 })
 
--- Slider tamaño
+KillerTab:CreateToggle({
+    Name = "Mostrar Esferas Verdes",
+    CurrentValue = false,
+    Flag = "ShowHitboxSpheres",
+    Callback = function(v)
+        showHitboxVisual = v
+        
+        if v and not hitboxExpanderEnabled then
+            Rayfield:Notify({
+                Title = "Advertencia",
+                Content = "Activa Hitbox Expander primero para ver las esferas",
+                Duration = 3
+            })
+            return
+        end
+        
+        Rayfield:Notify({
+            Title = "Visualización Hitbox",
+            Content = v and "✅ Esferas visibles" or "❌ Esferas ocultas",
+            Duration = 2
+        })
+    end
+})
+
 KillerTab:CreateSlider({
     Name = "Tamaño Hitbox",
-    Range = {5, 30},
+    Range = {5, 50},
     Increment = 1,
     Suffix = " studs",
     CurrentValue = hitboxSize,
@@ -2795,24 +2987,18 @@ KillerTab:CreateSlider({
     Callback = function(v)
         hitboxSize = math.floor(v)
         
-        -- Actualizar visualización si está activa
-        if showHitboxVisual then 
-            updateAllHitboxVisuals() 
-        end
-        
         if hitboxExpanderEnabled then
             Rayfield:Notify({
                 Title = "Hitbox Expander",
-                Content = string.format("📏 Tamaño: %d studs", hitboxSize),
+                Content = string.format("📏 Tamaño actualizado: %d studs", hitboxSize),
                 Duration = 2
             })
         end
     end
 })
 
--- Slider transparencia
 KillerTab:CreateSlider({
-    Name = "Transparencia Hitbox",
+    Name = "Transparencia",
     Range = {0.1, 0.9},
     Increment = 0.1,
     CurrentValue = hitboxTransparency,
@@ -2820,12 +3006,7 @@ KillerTab:CreateSlider({
     Callback = function(v)
         hitboxTransparency = v
         
-        -- Actualizar visualización si está activa
-        if showHitboxVisual then 
-            updateAllHitboxVisuals() 
-        end
-        
-        if hitboxExpanderEnabled then
+        if hitboxExpanderEnabled and showHitboxVisual then
             Rayfield:Notify({
                 Title = "Hitbox Expander",
                 Content = string.format("🌫️ Transparencia: %.1f", hitboxTransparency),
@@ -2835,7 +3016,6 @@ KillerTab:CreateSlider({
     end
 })
 
--- Color picker
 KillerTab:CreateColorPicker({
     Name = "Color Hitbox",
     Color = hitboxColor,
@@ -2843,51 +3023,11 @@ KillerTab:CreateColorPicker({
     Callback = function(v)
         hitboxColor = v
         
-        -- Actualizar visualización si está activa
-        if showHitboxVisual then 
-            updateAllHitboxVisuals() 
-        end
-        
         if hitboxExpanderEnabled then
             Rayfield:Notify({
                 Title = "Hitbox Expander",
                 Content = "🎨 Color actualizado",
                 Duration = 2
-            })
-        end
-    end
-})
-
--- Toggle visualización
-KillerTab:CreateToggle({
-    Name = "Mostrar Hitboxes Verdes",
-    CurrentValue = false,
-    Flag = "HitboxVisualToggle",
-    Callback = function(v)
-        showHitboxVisual = v
-        
-        if v then
-            if not hitboxExpanderEnabled then
-                Rayfield:Notify({
-                    Title = "Hitbox Visual",
-                    Content = "⚠️ Activa Hitbox Expander primero para ver hitboxes",
-                    Duration = 3
-                })
-                return
-            end
-            
-            startHitboxVisual()
-            Rayfield:Notify({
-                Title = "Hitbox Visual",
-                Content = "✅ Activado ",
-                Duration = 3
-            })
-        else
-            stopHitboxVisual()
-            Rayfield:Notify({
-                Title = "Hitbox Visual",
-                Content = "❌ Desactivado",
-                Duration = 3
             })
         end
     end

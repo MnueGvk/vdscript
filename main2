@@ -738,7 +738,7 @@ VisualTab:CreateColorPicker({
 -- ============================================
 
 local speedBoostEnabled = false
-local speedBoostLevel = 1  -- Nivel 1-6
+local speedBoostLevel = 1
 local speedBoostValues = {1.05, 1.1, 1.2, 1.3, 1.4, 1.5}
 local speedBoostConnection = nil
 local originalWalkspeed = 16
@@ -886,132 +886,56 @@ local repairBoostEnabled = false
 local repairBoostLevel = 1
 local repairSpeedMultiplier = 1.50
 local repairBoostValues = {
-    [1] = 1.50,   -- 50% más rápido
-    [2] = 2.00,   -- 100% más rápido
-    [3] = 2.50,   -- 150% más rápido
-    [4] = 3.00,   -- 200% más rápido
-    [5] = 4.00,   -- 300% más rápido
-    [6] = 5.00,   -- 400% más rápido
-    [7] = 6.00,   -- 500% más rápido
-    [8] = 7.00,   -- 600% más rápido
-    [9] = 8.00,   -- 700% más rápido
-    [10] = 9.00,  -- 800% más rápido
-    [11] = 10.00  -- 900% más rápido
+    [1] = 1.05,
+    [2] = 1.1,
+    [3] = 1.2,
+    [4] = 1.3,
+    [5] = 1.4,
+    [6] = 1.5
 }
 
 -- Variables
 local repairMainConnection = nil
 local attributeMaintenanceConnection = nil
-local repairRemote = nil
-local originalFireServer = nil
-local lastRepairEvent = 0
-local REPAIR_COOLDOWN = 0.2
+local fakeRepairerIds = {}
 
 -- ============ FUNCIONES PRINCIPALES ============
 
--- Buscar el RemoteEvent REAL que Violence District usa
-local function findRepairRemote()
-    if repairRemote then return repairRemote end
-    
-    -- Buscar en lugares comunes
-    local commonPaths = {
-        "Remotes.Generator.Repair",
-        "Remotes.Generator.RepairEvent",
-        "Remotes.RepairEvent",
-        "Generator.Remotes.Repair",
-        "Events.Generator.Repair",
-        "GeneratorEvents.Repair"
-    }
-    
-    for _, path in ipairs(commonPaths) do
-        local obj = game:GetService("ReplicatedStorage")
-        for part in path:gmatch("[^%.]+") do
-            obj = obj:FindFirstChild(part)
-            if not obj then break end
-        end
-        if obj and obj:IsA("RemoteEvent") then
-            repairRemote = obj
-            return repairRemote
-        end
-    end
-    
-    -- Búsqueda exhaustiva
-    for _, obj in ipairs(game:GetDescendants()) do
-        if obj:IsA("RemoteEvent") then
-            local name = obj.Name:lower()
-            if name:find("repair") or name:find("generator") then
-                repairRemote = obj
-                return repairRemote
-            end
-        end
-    end
-    
-    return nil
-end
-
--- Interceptar el RemoteEvent REAL
-local function interceptRepairRemote()
-    local remote = findRepairRemote()
-    if not remote then return false end
-    
-    if not originalFireServer then
-        originalFireServer = remote.FireServer
-    end
-    
-    -- Reemplazar FireServer con nuestra versión
-    remote.FireServer = function(self, ...)
-        local args = {...}
-        
-        if repairBoostEnabled then
-            -- Modificar el progreso ANTES de enviar al servidor
-            for i, arg in ipairs(args) do
-                if type(arg) == "number" and arg > 0 and arg < 100 then
-                    -- Multiplicar el progreso por nuestro boost
-                    args[i] = arg * repairSpeedMultiplier
-                elseif type(arg) == "table" then
-                    -- Buscar progreso en tablas
-                    if arg.Progress then
-                        arg.Progress = arg.Progress * repairSpeedMultiplier
-                    end
-                    if arg.progress then
-                        arg.progress = arg.progress * repairSpeedMultiplier
-                    end
-                    if arg.value then
-                        arg.value = arg.value * repairSpeedMultiplier
-                    end
+-- Obtener ID de survivor real
+local function getRandomSurvivorId()
+    local success, result = pcall(function()
+        for _, player in ipairs(Players:GetPlayers()) do
+            if player ~= LP then
+                local team = player.Team
+                if team and team.Name:lower():find("survivor") then
+                    return player.UserId
                 end
             end
         end
-        
-        -- Enviar al servidor con datos modificados
-        return originalFireServer(self, unpack(args))
-    end
+        return 999999
+    end)
     
-    return true
+    return success and result or 999999
 end
 
--- Solo los 3 atributos REALES que funcionan
+-- Solo los 3 atributos
 local function maintainBoostAttributes()
     local success, err = pcall(function()
         local char = LP.Character
         if not char then return end
         
-        -- Buscar survivor real para gp_applied_by
-        local survivorId = 999999
-        for _, player in ipairs(Players:GetPlayers()) do
-            if player ~= LP then
-                local team = player.Team
-                if team and team.Name:lower():find("survivor") then
-                    survivorId = player.UserId
-                    break
-                end
-            end
-        end
+        local survivorId = getRandomSurvivorId()
+        fakeRepairerIds = {LP.UserId, survivorId}
         
-        -- SOLO 3 ATRIBUTOS (los que SÍ funcionan):
-        char:SetAttribute("GroupProject", 2)            -- 2 personas reparando
-        char:SetAttribute("gp_applied_by", survivorId)  -- ID de otro survivor
-        char:SetAttribute("repairboost", repairSpeedMultiplier)  -- Nuestro boost
+        -- SOLO 3 ATRIBUTOS:
+        -- 1. GroupProject - Para reparación en grupo
+        char:SetAttribute("GroupProject", 2)
+        
+        -- 2. gp_applied_by - ID del otro reparador
+        char:SetAttribute("gp_applied_by", survivorId)
+        
+        -- 3. repairboost - Multiplicador de velocidad
+        char:SetAttribute("repairboost", repairSpeedMultiplier)
     end)
     
     if not success then
@@ -1019,13 +943,9 @@ local function maintainBoostAttributes()
     end
 end
 
--- Forzar eventos de reparación periódicamente
-local function forceRepairEvents()
+-- Aplicar boost
+local function applyRealRepairBoost()
     if not repairBoostEnabled then return end
-    
-    local currentTime = tick()
-    if currentTime - lastRepairEvent < REPAIR_COOLDOWN then return end
-    lastRepairEvent = currentTime
     
     local success, err = pcall(function()
         local char = LP.Character
@@ -1034,13 +954,16 @@ local function forceRepairEvents()
         local root = char:FindFirstChild("HumanoidRootPart")
         if not root then return end
         
-        -- Buscar generador cercano
         for _, obj in ipairs(workspace:GetDescendants()) do
             if obj:IsA("Model") and obj.Name:lower():find("generator") then
                 local genPart = obj.PrimaryPart or obj:FindFirstChildWhichIsA("BasePart")
                 if genPart and (root.Position - genPart.Position).Magnitude < 15 then
                     
-                    -- Obtener progreso actual
+                    -- Atributos en generador
+                    obj:SetAttribute("Repairers", fakeRepairerIds)
+                    obj:SetAttribute("RepairersCount", 2)
+                    
+                    -- Obtener progreso
                     local currentProgress = obj:GetAttribute("Progress") or 
                                            obj:GetAttribute("progress") or 
                                            obj:GetAttribute("CurrentProgress") or 0
@@ -1050,24 +973,14 @@ local function forceRepairEvents()
                     end
                     
                     if currentProgress < 100 then
-                        -- Incremento con nuestro boost
-                        local increment = 5.0 * repairSpeedMultiplier  -- 5% base * nuestro multiplicador
+                        -- Incremento con boost
+                        local increment = 10.0 * repairSpeedMultiplier
                         local newProgress = math.min(100, currentProgress + increment)
                         
-                        -- Aplicar localmente
+                        -- Aplicar progreso
                         obj:SetAttribute("Progress", newProgress / 100)
                         obj:SetAttribute("progress", newProgress / 100)
                         obj:SetAttribute("CurrentProgress", newProgress)
-                        
-                        -- Enviar evento REAL al servidor
-                        local remote = findRepairRemote()
-                        if remote then
-                            remote:FireServer(obj, newProgress, {
-                                GroupProject = 2,
-                                gp_applied_by = char:GetAttribute("gp_applied_by"),
-                                repairboost = repairSpeedMultiplier
-                            })
-                        end
                     end
                     
                     break
@@ -1077,11 +990,9 @@ local function forceRepairEvents()
     end)
     
     if not success then
-        warn("[Force Repair] Error:", err)
+        warn("[Generator Boost] Error aplicar boost:", err)
     end
 end
-
--- ============ CONTROL DEL SISTEMA ============
 
 local function startRepairBoost()
     if repairMainConnection then
@@ -1096,26 +1007,22 @@ local function startRepairBoost()
     
     repairSpeedMultiplier = repairBoostValues[repairBoostLevel] or 1.50
     
-    -- 1. Interceptar RemoteEvent REAL
-    interceptRepairRemote()
-    
-    -- 2. Mantener atributos cada 0.5 segundos
     attributeMaintenanceConnection = RunService.Heartbeat:Connect(function()
         if repairBoostEnabled then
-            if tick() % 0.5 < 0.1 then
+            if tick() % 1 < 0.1 then
                 maintainBoostAttributes()
             end
         end
     end)
     
-    -- 3. Forzar eventos de reparación
     repairMainConnection = RunService.Heartbeat:Connect(function()
         if repairBoostEnabled then
-            forceRepairEvents()
+            if tick() % 0.2 < 0.05 then
+                applyRealRepairBoost()
+            end
         end
     end)
     
-    -- Aplicar inmediatamente
     task.spawn(function()
         task.wait(0.5)
         maintainBoostAttributes()
@@ -1133,16 +1040,6 @@ local function stopRepairBoost()
         attributeMaintenanceConnection = nil
     end
     
-    -- Restaurar RemoteEvent original
-    if repairRemote and originalFireServer then
-        pcall(function()
-            repairRemote.FireServer = originalFireServer
-        end)
-        repairRemote = nil
-        originalFireServer = nil
-    end
-    
-    -- Limpiar solo los 3 atributos
     task.spawn(function()
         task.wait(0.2)
         pcall(function()
@@ -1155,8 +1052,6 @@ local function stopRepairBoost()
         end)
     end)
 end
-
--- ============ INTERFAZ ============
 
 -- Sección Generator Boost
 SurvivorTab:CreateSection("Generator Boost")
@@ -1175,9 +1070,7 @@ SurvivorTab:CreateToggle({
                     startRepairBoost()
                 end)
                 
-                -- Reconectar al cambiar personaje
-                local charConn
-                charConn = LP.CharacterAdded:Connect(function()
+                LP.CharacterAdded:Connect(function()
                     if repairBoostEnabled then
                         task.wait(1.5)
                         if repairBoostEnabled then
@@ -1201,7 +1094,7 @@ SurvivorTab:CreateToggle({
 
 SurvivorTab:CreateSlider({
     Name = "Nivel de Velocidad",
-    Range = {1, 11},
+    Range = {1, 6},
     Increment = 1,
     CurrentValue = 1,
     Flag = "GeneratorBoostLevel",
@@ -1213,7 +1106,6 @@ SurvivorTab:CreateSlider({
             if repairBoostEnabled then
                 repairSpeedMultiplier = repairBoostValues[newLevel]
                 
-                -- Actualizar inmediatamente
                 local char = LP.Character
                 if char then
                     char:SetAttribute("repairboost", repairSpeedMultiplier)
@@ -1227,213 +1119,9 @@ SurvivorTab:CreateSlider({
     end
 })
 
--- Botón para debug
-SurvivorTab:CreateButton({
-    Name = "Debug Info",
-    Callback = function()
-        local remote = findRepairRemote()
-        print("=== GENERATOR BOOST DEBUG ===")
-        print("Estado:", repairBoostEnabled)
-        print("Multiplicador:", repairSpeedMultiplier)
-        print("Remote encontrado:", remote and remote:GetFullName() or "NO")
-        print("Interceptado:", originalFireServer and "SI" or "NO")
-        
-        local char = LP.Character
-        if char then
-            print("GroupProject:", char:GetAttribute("GroupProject"))
-            print("gp_applied_by:", char:GetAttribute("gp_applied_by"))
-            print("repairboost:", char:GetAttribute("repairboost"))
-        end
-        print("=============================")
-    end
-})
-
 -- ============================================
 -- 14. SISTEMA PERFECT SKILLCHECK (SURVIVOR TAB)
 -- ============================================
-
-local perfectSkillEnabled = false
-local skillcheckConnections = {}
-local skillcheckRemotes = {}
-
-local skillcheckNames = {
-    "SkillCheckPromptGui", "SkillCheckPromptGui-con", "SkillCheckEvnt",
-    "SkillCheckFailEvent", "SkillCheckResultEvent", "SkillCheck", "SkillCheckGui"
-}
-
-local skillcheckHash = {}
-for _, name in ipairs(skillcheckNames) do
-    skillcheckHash[name:lower()] = true
-end
-
-local function isSkillCheck(obj)
-    if not obj then return false end
-    local name = obj.Name
-    return skillcheckHash[name:lower()] or name:lower():find("skillcheck") ~= nil
-end
-
-local function findAndInterceptSkillRemotes()
-    for _, obj in ipairs(game:GetDescendants()) do
-        if (obj:IsA("RemoteEvent") or obj:IsA("RemoteFunction")) and isSkillCheck(obj) then
-            if not skillcheckRemotes[obj] then
-                skillcheckRemotes[obj] = obj.FireServer
-                obj.FireServer = function(self, ...)
-                    local args = {...}
-                    if perfectSkillEnabled then
-                        local eventType = ""
-                        if #args > 0 then
-                            if type(args[1]) == "string" then
-                                eventType = args[1]:lower()
-                            end
-                        end
-                        if eventType:find("skillcheck") or eventType:find("skill") or 
-                           obj.Name:lower():find("skillcheck") then
-                            local modifiedArgs = {}
-                            for i, arg in ipairs(args) do
-                                if type(arg) == "string" then
-                                    if arg:lower():find("fail") or arg:lower():find("miss") or 
-                                       arg:lower():find("good") or arg:lower():find("great") or
-                                       arg:lower():find("success") then
-                                        modifiedArgs[i] = "Perfect"
-                                    else
-                                        modifiedArgs[i] = arg
-                                    end
-                                elseif type(arg) == "boolean" then
-                                    modifiedArgs[i] = true
-                                elseif type(arg) == "number" and i == 2 then
-                                    modifiedArgs[i] = 100
-                                elseif type(arg) == "table" then
-                                    local modifiedTable = {}
-                                    for k, v in pairs(arg) do
-                                        if k:lower():find("difficulty") then
-                                            modifiedTable[k] = 0
-                                        elseif k:lower():find("perfectzone") then
-                                            modifiedTable[k] = 100
-                                        elseif k:lower():find("chance") then
-                                            modifiedTable[k] = 100
-                                        elseif k:lower():find("result") then
-                                            modifiedTable[k] = "Perfect"
-                                        elseif k:lower():find("success") then
-                                            modifiedTable[k] = true
-                                        else
-                                            modifiedTable[k] = v
-                                        end
-                                    end
-                                    modifiedArgs[i] = modifiedTable
-                                else
-                                    modifiedArgs[i] = arg
-                                end
-                            end
-                            return skillcheckRemotes[obj](self, unpack(modifiedArgs))
-                        end
-                    end
-                    return skillcheckRemotes[obj](self, ...)
-                end
-            end
-        end
-    end
-end
-
-local function monitorSkillCheckGUIs()
-    local playerGui = LP:FindFirstChild("PlayerGui")
-    if not playerGui then return end
-    local function processSkillGUI(gui)
-        if not perfectSkillEnabled then return end
-        pcall(function()
-            for _, descendant in ipairs(gui:GetDescendants()) do
-                if descendant:IsA("Frame") then
-                    local nameLower = descendant.Name:lower()
-                    if nameLower:find("perfect") or nameLower:find("zone") or 
-                       nameLower:find("bar") or nameLower:find("area") then
-                        descendant.Size = UDim2.new(1, 0, 1, 0)
-                        descendant.Position = UDim2.new(0, 0, 0, 0)
-                        descendant.BackgroundTransparency = 1
-                    end
-                end
-                if descendant:IsA("TextLabel") or descendant:IsA("TextButton") then
-                    local text = descendant.Text:lower()
-                    if text:find("skill") or text:find("check") or 
-                       text:find("press") or text:find("hit") then
-                        descendant.Text = "PERFECT ✓"
-                        descendant.TextColor3 = Color3.fromRGB(0, 255, 0)
-                    end
-                end
-            end
-            gui.BackgroundTransparency = 1
-        end)
-    end
-    local guiConnection = playerGui.ChildAdded:Connect(function(child)
-        if isSkillCheck(child) then
-            processSkillGUI(child)
-        end
-    end)
-    table.insert(skillcheckConnections, guiConnection)
-end
-
-local function forcePerfectSkillChecks()
-    if not perfectSkillEnabled then return end
-    local playerGui = LP:FindFirstChild("PlayerGui")
-    if playerGui then
-        for _, gui in ipairs(playerGui:GetChildren()) do
-            if isSkillCheck(gui) then
-                pcall(function()
-                    gui.Size = UDim2.new(1, 0, 1, 0)
-                    gui.Position = UDim2.new(0, 0, 0, 0)
-                    for _, element in ipairs(gui:GetDescendants()) do
-                        if element:IsA("TextButton") or element:IsA("ImageButton") then
-                            element.Size = UDim2.new(1, 0, 1, 0)
-                            element.Position = UDim2.new(0, 0, 0, 0)
-                        end
-                    end
-                end)
-            end
-        end
-    end
-end
-
--- Sección SkillCheck
-SurvivorTab:CreateSection("SkillCheck")
-
-SurvivorTab:CreateToggle({
-    Name = "Perfect Skillcheck",
-    CurrentValue = false,
-    Flag = "PerfectSkill",
-    Callback = function(v)
-        perfectSkillEnabled = v
-        if v then
-            findAndInterceptSkillRemotes()
-            monitorSkillCheckGUIs()
-            local heartbeatConn = RunService.Heartbeat:Connect(function()
-                if perfectSkillEnabled then
-                    forcePerfectSkillChecks()
-                end
-            end)
-            table.insert(skillcheckConnections, heartbeatConn)
-            local remoteConn = ReplicatedStorage.DescendantAdded:Connect(function(child)
-                if (child:IsA("RemoteEvent") or child:IsA("RemoteFunction")) and isSkillCheck(child) then
-                    findAndInterceptSkillRemotes()
-                end
-            end)
-            table.insert(skillcheckConnections, remoteConn)
-            Rayfield:Notify({
-                Title = "Perfect Skillcheck",
-                Content = "Activado - Todos los skillchecks serán perfectos al 100%",
-                Duration = 4
-            })
-        else
-            for _, conn in pairs(skillcheckConnections) do
-                conn:Disconnect()
-            end
-            skillcheckConnections = {}
-            for remote, originalFunc in pairs(skillcheckRemotes) do
-                if remote then
-                    remote.FireServer = originalFunc
-                end
-            end
-            skillcheckRemotes = {}
-        end
-    end
-})
 
 -- ============================================
 -- 15. SISTEMA NO SKILLCHECK (SURVIVOR TAB)

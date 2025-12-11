@@ -916,47 +916,46 @@ SurvivorTab:CreateSlider({
 })
 
 -- ============================================
--- GENERATOR BOOST SIMPLE
+-- GENERATOR BOOST
 -- ============================================
 
 local boostEnabled = false
 local boostLevel = 1
-local boostValues = {100.00, 250.00, 500.00, 1000.00, 5000.00}
+local boostValues = {1.05, 1.1, 1.2, 1.3, 1.4, 1.5}
 
--- Sistema simple
+-- Sistema
 local boostLoop = nil
 local hookedRemotes = {}
+local originalFunctions = {}
 
--- Interceptar solo reparación
+-- Interceptar remotas
 local function hookRepairRemotes()
     for _, obj in ipairs(game:GetDescendants()) do
-        if obj:IsA("RemoteEvent") or obj:IsA("RemoteFunction") then
+        if (obj:IsA("RemoteEvent") or obj:IsA("RemoteFunction")) and not hookedRemotes[obj] then
             local name = obj.Name:lower()
             
-            -- Solo reparación, no skillchecks
             if (name:find("repair") or name:find("generator") or name:find("fix")) and
                not name:find("skill") and not name:find("check") then
                 
-                if not hookedRemotes[obj] then
-                    if obj:IsA("RemoteEvent") then
-                        local old = obj.FireServer
-                        obj.FireServer = function(self, ...)
-                            if boostEnabled then
-                                return true
-                            end
-                            return old(self, ...)
+                if obj:IsA("RemoteEvent") then
+                    originalFunctions[obj] = obj.FireServer
+                    obj.FireServer = function(self, ...)
+                        if boostEnabled then
+                            return true
                         end
-                    else
-                        local old = obj.InvokeServer
-                        obj.InvokeServer = function(self, ...)
-                            if boostEnabled then
-                                return true, 100
-                            end
-                            return old(self, ...)
-                        end
+                        return originalFunctions[obj](self, ...)
                     end
-                    hookedRemotes[obj] = true
+                else
+                    originalFunctions[obj] = obj.InvokeServer
+                    obj.InvokeServer = function(self, ...)
+                        if boostEnabled then
+                            return true, 100
+                        end
+                        return originalFunctions[obj](self, ...)
+                    end
                 end
+                
+                hookedRemotes[obj] = true
             end
         end
     end
@@ -969,25 +968,37 @@ local function applyBoost()
     local char = LP.Character
     if not char then return end
     
-    -- Atributos básicos
+    -- Atributos
     char:SetAttribute("GroupProject", 3)
-    char:SetAttribute("gp_applied_by", "999999")
+    char:SetAttribute("gp_applied_by", 999999)
     char:SetAttribute("repairboost", boostValues[boostLevel])
     
-    -- Buscar y reparar generadores
-    if char:FindFirstChild("HumanoidRootPart") then
-        local root = char.HumanoidRootPart
-        
-        for _, obj in ipairs(workspace:GetDescendants()) do
-            if obj:IsA("Model") and obj.Name:lower():find("generator") then
-                local part = obj.PrimaryPart or obj:FindFirstChildWhichIsA("BasePart")
-                if part then
-                    local dist = (root.Position - part.Position).Magnitude
-                    if dist < 30 then
-                        obj:SetAttribute("Progress", 100)
-                        obj:SetAttribute("progress", 100)
-                        break
+    -- Buscar generador
+    local root = char:FindFirstChild("HumanoidRootPart")
+    if not root then return end
+    
+    for _, obj in ipairs(workspace:GetDescendants()) do
+        if obj:IsA("Model") and obj.Name:lower():find("generator") then
+            local part = obj.PrimaryPart or obj:FindFirstChildWhichIsA("BasePart")
+            if part then
+                local dist = (root.Position - part.Position).Magnitude
+                if dist < 20 then
+                    -- Aumentar progreso
+                    local progress = obj:GetAttribute("Progress") or 
+                                    obj:GetAttribute("progress") or 0
+                    
+                    if progress < 1 then
+                        progress = progress * 100
                     end
+                    
+                    if progress < 100 then
+                        local increment = 1.0 * boostValues[boostLevel]
+                        local newProgress = math.min(100, progress + increment)
+                        obj:SetAttribute("Progress", newProgress)
+                        obj:SetAttribute("progress", newProgress)
+                    end
+                    
+                    break
                 end
             end
         end
@@ -996,12 +1007,14 @@ end
 
 -- Control
 local function startBoost()
-    if boostLoop then return end
+    if boostLoop then
+        boostLoop:Disconnect()
+    end
     
     hookRepairRemotes()
     
     boostLoop = RunService.Heartbeat:Connect(function()
-        pcall(applyBoost)
+        applyBoost()
     end)
 end
 
@@ -1011,26 +1024,27 @@ local function stopBoost()
         boostLoop = nil
     end
     
-    for obj, _ in pairs(hookedRemotes) do
+    -- Restaurar funciones
+    for obj, func in pairs(originalFunctions) do
         if obj and obj.Parent then
             if obj:IsA("RemoteEvent") then
-                obj.FireServer = nil
+                obj.FireServer = func
             else
-                obj.InvokeServer = nil
+                obj.InvokeServer = func
             end
         end
     end
     
+    originalFunctions = {}
     hookedRemotes = {}
     
-    pcall(function()
-        local char = LP.Character
-        if char then
-            char:SetAttribute("GroupProject", nil)
-            char:SetAttribute("gp_applied_by", nil)
-            char:SetAttribute("repairboost", nil)
-        end
-    end)
+    -- Limpiar atributos
+    local char = LP.Character
+    if char then
+        char:SetAttribute("GroupProject", nil)
+        char:SetAttribute("gp_applied_by", nil)
+        char:SetAttribute("repairboost", nil)
+    end
 end
 
 -- Interfaz
@@ -1052,7 +1066,7 @@ SurvivorTab:CreateToggle({
 
 SurvivorTab:CreateSlider({
     Name = "Nivel",
-    Range = {1, 5},
+    Range = {1, 6},
     Increment = 1,
     CurrentValue = 1,
     Flag = "BoostLevel",
@@ -1169,6 +1183,8 @@ local function interceptSkillCheckRemotes()
         end
     end
 end
+
+SurvivorTab:CreateSection("Skill-Checks")
 
 SurvivorTab:CreateToggle({
     Name = "No Skillchecks",

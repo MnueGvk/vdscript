@@ -919,47 +919,46 @@ SurvivorTab:CreateSlider({
 -- GENERATOR BOOST
 -- ============================================
 
--- Configuración
+-- Configuración MEJORADA
 local repairBoostEnabled = false
 local repairBoostLevel = 1
 local repairBoostValues = {
-    [1] = 1.5,
-    [2] = 2.0,
-    [3] = 5.0,
-    [4] = 10.0,
-    [5] = 15.0,
-    [6] = 20.0
-  }
+    [1] = 5.00,
+    [2] = 7.00,
+    [3] = 10.00,
+    [4] = 15.00,
+    [5] = 25.00
+}
 
 -- Variables PERMANENTES
 local repairLoop = nil
 local isNearGenerator = false
-local currentGenerator = nil
 local myAttributesActive = false
 
---sistema
+-- ============ SISTEMA PERMANENTE ============
+
+-- Función para mantener atributos SIEMPRE ACTIVOS
 local function maintainPermanentAttributes()
     if not repairBoostEnabled then return end
     
     local char = LP.Character
     if not char then return end
     
-    local currentMultiplier = repairBoostValues[repairBoostLevel]
-    
+    -- Atributos PERMANENTES (siempre activos mientras el boost esté ON)
     char:SetAttribute("GroupProject", 2)
-    char:SetAttribute("gp_applied_by", getSurvivorIdForBoost())
-    char:SetAttribute("repairboost", currentMultiplier)
+    char:SetAttribute("gp_applied_by", getRealSurvivorId())
+    char:SetAttribute("repairboost", repairBoostValues[repairBoostLevel])
     char:SetAttribute("IsRepairing", true)
     
     myAttributesActive = true
     return true
 end
 
--- Función mejorada para obtener survivor
-local function getSurvivorIdForBoost()
-
+-- Obtener survivor REAL (mejorado)
+local function getRealSurvivorId()
     for _, player in ipairs(Players:GetPlayers()) do
-        if player ~= LP and player.Team and player.Team.Name:lower():find("survivor") then
+        if player ~= LP then
+            -- Cualquier jugador en la partida (no solo survivors)
             if player.Character and player.Character:FindFirstChild("Humanoid") then
                 if player.Character.Humanoid.Health > 0 then
                     return player.UserId
@@ -967,117 +966,95 @@ local function getSurvivorIdForBoost()
             end
         end
     end
-    
-    for _, player in ipairs(Players:GetPlayers()) do
-        if player ~= LP then
-            return player.UserId
-        end
-    end
-    
-    return 999999
+    return 999999  -- Fallback
 end
 
--- Función para aplicar boost REAL cuando esté cerca de generador
-local function applyPermanentBoost()
-    if not repairBoostEnabled then return end
-    
-    maintainPermanentAttributes()
-    
-    local char = LP.Character
-    if not char or not char:FindFirstChild("HumanoidRootPart") then return end
-    
-    local root = char.HumanoidRootPart
-    local generator = findNearestGenerator(root.Position, 25)
-    
-    if not generator then
-        isNearGenerator = false
-        currentGenerator = nil
-        return
-    end
-    
-    isNearGenerator = true
-    currentGenerator = generator
-    
-    local currentMultiplier = repairBoostValues[repairBoostLevel]
-    
-    generator:SetAttribute("ActiveRepairers", 2)
-    generator:SetAttribute("RepairSpeedMultiplier", currentMultiplier)
-    generator:SetAttribute("IsBeingRepaired", true)
-    generator:SetAttribute("LastRepairUpdate", tick())
-    
-    local repairersList = generator:GetAttribute("RepairersList") or {}
-    if type(repairersList) == "table" then
-        repairersList[LP.UserId] = true
-        repairersList[getSurvivorIdForBoost()] = true
-        generator:SetAttribute("RepairersList", repairersList)
-    end
-    forceGeneratorProgress(generator, currentMultiplier)
-end
-
-local function forceGeneratorProgress(generator, multiplier)
-    if not generator then return end
-    
-    local progress = generator:GetAttribute("Progress") or 
-                    generator:GetAttribute("progress") or 
-                    generator:GetAttribute("CurrentProgress") or 0
-    
-    if progress <= 1 then
-        progress = progress * 100
-    end
-    
-    if progress < 100 then
-        local baseIncrement = 25
-        local levelBonus = (repairBoostLevel - 1) * 15
-        local totalIncrement = baseIncrement + levelBonus
-        
-        local newProgress = math.min(100, progress + totalIncrement)
-        
-        generator:SetAttribute("Progress", newProgress / 100)
-        generator:SetAttribute("progress", newProgress / 100)
-        generator:SetAttribute("CurrentProgress", newProgress)
-        generator:SetAttribute("RepairValue", newProgress)
-        
-        if generator.PrimaryPart and tick() % 0.5 < 0.1 then
-            generator.PrimaryPart.BrickColor = BrickColor.new("Bright green")
-        end
-    end
-end
-
-local function findNearestGenerator(position, maxDistance)
-    local nearest = nil
-    local nearestDist = maxDistance
-    
+-- Función SIMPLE para encontrar generador
+local function findSimpleGenerator(position, maxDistance)
     for _, obj in ipairs(workspace:GetDescendants()) do
         if obj:IsA("Model") and obj.Name:lower():find("generator") then
             local genPart = obj.PrimaryPart or obj:FindFirstChildWhichIsA("BasePart")
             if genPart then
                 local distance = (position - genPart.Position).Magnitude
-                if distance < nearestDist then
-                    nearestDist = distance
-                    nearest = obj
+                if distance < maxDistance then
+                    return obj, distance
                 end
             end
         end
     end
-    
-    return nearest
+    return nil
 end
 
+-- Función PRINCIPAL de boost
+local function applyPermanentBoost()
+    if not repairBoostEnabled then return end
+    
+    -- 1. Mantener atributos SIEMPRE activos
+    maintainPermanentAttributes()
+    
+    -- 2. Buscar generador cercano
+    local char = LP.Character
+    if not char or not char:FindFirstChild("HumanoidRootPart") then return end
+    
+    local root = char.HumanoidRootPart
+    local generator, distance = findSimpleGenerator(root.Position, 20)
+    
+    if generator then
+        isNearGenerator = true
+        
+        -- 3. Aplicar boost AL GENERADOR
+        local multiplier = repairBoostValues[repairBoostLevel]
+        
+        generator:SetAttribute("ActiveRepairers", 2)
+        generator:SetAttribute("RepairSpeedMultiplier", multiplier)
+        generator:SetAttribute("IsBeingRepaired", true)
+        generator:SetAttribute("LastRepairUpdate", tick())
+        
+        -- 4. MANIPULACIÓN DIRECTA DEL PROGRESO (ESTO SÍ SE NOTA)
+        local progress = generator:GetAttribute("Progress") or 
+                        generator:GetAttribute("progress") or 
+                        generator:GetAttribute("CurrentProgress") or 0
+        
+        -- Normalizar a porcentaje
+        if progress <= 1 then
+            progress = progress * 100
+        end
+        
+        if progress < 100 then
+            -- 🔥 INCREMENTO REALMENTE VISIBLE
+            -- Nivel 1: 10% por tick (10x más rápido que tu 1%)
+            -- Nivel 5: 40% por tick (40x más rápido)
+            local increment = 10 + ((repairBoostLevel - 1) * 7.5)
+            local newProgress = math.min(100, progress + increment)
+            
+            -- Aplicar a todos los formatos
+            generator:SetAttribute("Progress", newProgress)
+            generator:SetAttribute("progress", newProgress)
+            generator:SetAttribute("CurrentProgress", newProgress)
+        end
+        
+    else
+        isNearGenerator = false
+    end
+end
 
-local function startPermanentBoost()
+-- ============ CONTROL PERMANENTE ============
+
+local function startPermanentSystem()
     if repairLoop then
         repairLoop:Disconnect()
         repairLoop = nil
     end
     
+    -- Loop permanente (60 FPS)
     repairLoop = RunService.Heartbeat:Connect(function()
-        if repairBoostEnabled then
-            pcall(applyPermanentBoost)
-        end
+        pcall(applyPermanentBoost)
     end)
+    
+    print("[PERMANENT BOOST] Sistema iniciado - Multiplicador:", repairBoostValues[repairBoostLevel])
 end
 
-local function stopPermanentBoost()
+local function stopPermanentSystem()
     if repairLoop then
         repairLoop:Disconnect()
         repairLoop = nil
@@ -1090,54 +1067,71 @@ local function stopPermanentBoost()
             char:SetAttribute("GroupProject", nil)
             char:SetAttribute("gp_applied_by", nil)
             char:SetAttribute("repairboost", nil)
-            char:SetAttribute("isRepairing", nil)
+            char:SetAttribute("IsRepairing", nil)
         end
     end)
-  
+    
     isNearGenerator = false
-    currentGenerator = nil
     myAttributesActive = false
     
+    print("[PERMANENT BOOST] Sistema detenido")
 end
+
 
 SurvivorTab:CreateSection("Generator Boost")
 
 SurvivorTab:CreateToggle({
     Name = "Generator Boost",
     CurrentValue = false,
-    Flag = "PermanentGenBoost",
+    Flag = "PermGenBoost",
     Callback = function(value)
         repairBoostEnabled = value
         
         if value then
-            startPermanentBoost()
+            -- Iniciar inmediatamente
+            startPermanentSystem()
             
-            -- Monitor de cambio de personaje
+            -- Mostrar info
+            Rayfield:Notify({
+                Title = "Generator Boost PERMANENTE",
+                Content = string.format("Activado\nNivel %d - %.1fx más rápido", 
+                    repairBoostLevel, repairBoostValues[repairBoostLevel]),
+                Duration = 5
+            })
+            
+            -- Reconectar si cambia personaje
             LP.CharacterAdded:Connect(function()
-                task.wait(1.5)
                 if repairBoostEnabled then
-                    startPermanentBoost()
+                    task.wait(1.5)
+                    startPermanentSystem()
                 end
             end)
             
         else
-            stopPermanentBoost()
+            stopPermanentSystem()
         end
     end
 })
 
 SurvivorTab:CreateSlider({
-    Name = "Velocidad de Reparación",
-    Range = {1, 6},
+    Name = "Velocidad (5x - 25x)",
+    Range = {1, 5},
     Increment = 1,
     CurrentValue = 1,
     Flag = "PermBoostSpeed",
     Callback = function(value)
         repairBoostLevel = math.floor(value)
-        local speed = repairBoostValues[repairBoostLevel]
+        
+        if repairBoostEnabled then
+            Rayfield:Notify({
+                Title = "Generator Boost",
+                Content = string.format("Nivel %d\n%.1fx más rápido", 
+                    repairBoostLevel, repairBoostValues[repairBoostLevel]),
+                Duration = 3
+            })
         end
-    })
-
+    end
+})
 -- ============================================
 -- 14. SISTEMA PERFECT SKILLCHECK (SURVIVOR TAB)
 -- ============================================

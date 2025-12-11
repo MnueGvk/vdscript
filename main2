@@ -983,7 +983,6 @@ local function applyBoost()
             if part then
                 local dist = (root.Position - part.Position).Magnitude
                 if dist < 20 then
-                    -- Aumentar progreso
                     local progress = obj:GetAttribute("Progress") or 
                                     obj:GetAttribute("progress") or 0
                     
@@ -1009,12 +1008,13 @@ end
 local function startBoost()
     if boostLoop then
         boostLoop:Disconnect()
+        boostLoop = nil
     end
     
     hookRepairRemotes()
     
     boostLoop = RunService.Heartbeat:Connect(function()
-        applyBoost()
+        pcall(applyBoost)
     end)
 end
 
@@ -1024,7 +1024,6 @@ local function stopBoost()
         boostLoop = nil
     end
     
-    -- Restaurar funciones
     for obj, func in pairs(originalFunctions) do
         if obj and obj.Parent then
             if obj:IsA("RemoteEvent") then
@@ -1038,26 +1037,32 @@ local function stopBoost()
     originalFunctions = {}
     hookedRemotes = {}
     
-    -- Limpiar atributos
-    local char = LP.Character
-    if char then
-        char:SetAttribute("GroupProject", nil)
-        char:SetAttribute("gp_applied_by", nil)
-        char:SetAttribute("repairboost", nil)
-    end
+    pcall(function()
+        local char = LP.Character
+        if char then
+            char:SetAttribute("GroupProject", nil)
+            char:SetAttribute("gp_applied_by", nil)
+            char:SetAttribute("repairboost", nil)
+        end
+    end)
 end
 
--- Interfaz
+
 SurvivorTab:CreateSection("Generator Boost")
 
 SurvivorTab:CreateToggle({
     Name = "Generator Boost",
     CurrentValue = false,
-    Flag = "GenBoost",
-    Callback = function(v)
-        boostEnabled = v
-        if v then
-            startBoost()
+    Callback = function(state)
+        boostEnabled = state
+        
+        if state then
+            task.spawn(function()
+                task.wait(0.1)
+                if boostEnabled then
+                    startBoost()
+                end
+            end)
         else
             stopBoost()
         end
@@ -1069,9 +1074,8 @@ SurvivorTab:CreateSlider({
     Range = {1, 6},
     Increment = 1,
     CurrentValue = 1,
-    Flag = "BoostLevel",
-    Callback = function(v)
-        boostLevel = math.floor(v)
+    Callback = function(value)
+        boostLevel = math.floor(value)
     end
 })
 

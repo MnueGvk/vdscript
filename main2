@@ -916,7 +916,7 @@ SurvivorTab:CreateSlider({
 })
 
 -- ============================================
--- GENERATOR BOOST CORREGIDO
+-- GENERATOR BOOST
 -- ============================================
 
 local boostEnabled = false
@@ -924,77 +924,133 @@ local boostLevel = 1
 local boostValues = {1.05, 1.1, 1.2, 1.3, 1.4, 1.5}
 local boostLoop = nil
 
-local function applyBoost()
-    if not boostEnabled then return end
+local generatorCache = {
+    items = {},
+    lastUpdate = 0,
+    updateInterval = 5
+}
+
+local function updateGeneratorCache()
+    local now = tick()
+    if now - generatorCache.lastUpdate < generatorCache.updateInterval then
+        return generatorCache.items
+    end
     
-    local char = LP.Character
-    if not char then return end
-    
-    char:SetAttribute("GroupProject", 3)
-    char:SetAttribute("gp_applied_by", 999999)
-    char:SetAttribute("repairboost", boostValues[boostLevel])
-    char:SetAttribute("IsRepairing", true)
-    
-    -- Buscar generador y aumentar progreso
-    local root = char:FindFirstChild("HumanoidRootPart")
-    if not root then return end
+    generatorCache.items = {}
     
     for _, obj in ipairs(workspace:GetDescendants()) do
         if obj:IsA("Model") and obj.Name:lower():find("generator") then
             local part = obj.PrimaryPart or obj:FindFirstChildWhichIsA("BasePart")
             if part then
-                local dist = (root.Position - part.Position).Magnitude
-                if dist < 20 then
-                    -- Aumentar progreso directamente
-                    local current = obj:GetAttribute("Progress") or 
-                                   obj:GetAttribute("progress") or 0
-                    
-                    if current < 1 then
-                        current = current * 100
-                    end
-                    
-                    if current < 100 then
-                        local increment = 7.0 * boostValues[boostLevel] 
-                        local newProgress = math.min(100, current + increment)
-                        
-                        obj:SetAttribute("Progress", newProgress)
-                        obj:SetAttribute("progress", newProgress)
-                        obj:SetAttribute("CurrentProgress", newProgress)
-                    end
-                    
-                    break
-                end
+                table.insert(generatorCache.items, {
+                    model = obj,
+                    part = part,
+                    lastCheck = 0
+                })
             end
+        end
+    end
+    
+    generatorCache.lastUpdate = now
+    return generatorCache.items
+end
+
+local lastAttributeUpdate = 0
+local ATTRIBUTE_UPDATE_INTERVAL = 0.5
+
+local function applyOptimizedBoost()
+    if not boostEnabled then return end
+    
+    local char = LP.Character
+    if not char then return end
+    
+    local now = tick()
+    
+    if now - lastAttributeUpdate > ATTRIBUTE_UPDATE_INTERVAL then
+        char:SetAttribute("GroupProject", 3)
+        char:SetAttribute("gp_applied_by", 999999)
+        char:SetAttribute("repairboost", boostValues[boostLevel])
+        char:SetAttribute("IsRepairing", true)
+        lastAttributeUpdate = now
+    end
+    
+    local root = char:FindFirstChild("HumanoidRootPart")
+    if not root then return end
+    
+    local playerPos = root.Position
+    local nearestGen = nil
+    local nearestDist = 20
+    
+    local generators = updateGeneratorCache()
+    
+    for _, genData in ipairs(generators) do
+      
+        if genData.model and genData.model.Parent and genData.part and genData.part.Parent then
+            local dist = (playerPos - genData.part.Position).Magnitude
+            
+            if dist < nearestDist then
+                nearestDist = dist
+                nearestGen = genData.model
+                
+                if dist < 5 then break end
+            end
+        else
+            genData.model = nil
+        end
+    end
+    
+    if nearestGen then
+        local current = nearestGen:GetAttribute("Progress") or 
+                       nearestGen:GetAttribute("progress") or 0
+        
+        if current < 1 then
+            current = current * 100
+        end
+        
+        if current < 100 then
+            local increment = 7.0 * boostValues[boostLevel]
+            local newProgress = math.min(100, current + increment)
+            
+            nearestGen:SetAttribute("Progress", newProgress)
+            nearestGen:SetAttribute("progress", newProgress)
+            nearestGen:SetAttribute("CurrentProgress", newProgress)
         end
     end
 end
 
--- Control simple
-local function startBoost()
+local function startOptimizedBoost()
     if boostLoop then
         boostLoop:Disconnect()
         boostLoop = nil
     end
     
-    boostLoop = RunService.Heartbeat:Connect(function()
-        applyBoost()
+    boostLoop = RunService.Stepped:Connect(function()
+        if boostEnabled then
+            applyOptimizedBoost()
+        end
     end)
+    
+    updateGeneratorCache()
 end
 
-local function stopBoost()
+local function stopOptimizedBoost()
     if boostLoop then
         boostLoop:Disconnect()
         boostLoop = nil
     end
     
-    -- Limpiar atributos
-    local char = LP.Character
-    if char then
-        char:SetAttribute("GroupProject", nil)
-        char:SetAttribute("gp_applied_by", nil)
-        char:SetAttribute("repairboost", nil)
-        char:SetAttribute("IsRepairing", nil)
-    end
+    pcall(function()
+        local char = LP.Character
+        if char then
+            char:SetAttribute("GroupProject", nil)
+            char:SetAttribute("gp_applied_by", nil)
+            char:SetAttribute("repairboost", nil)
+            char:SetAttribute("IsRepairing", nil)
+        end
+    end)
+    
+    generatorCache.items = {}
+    generatorCache.lastUpdate = 0
 end
 
 SurvivorTab:CreateSection("Generator Boost")
@@ -1006,16 +1062,15 @@ SurvivorTab:CreateToggle({
         boostEnabled = value
         
         if value then
-            startBoost()
+            startOptimizedBoost()
         else
-            stopBoost()
+            stopOptimizedBoost()
         end
     end
 })
 
--- Slider SIMPLE
 SurvivorTab:CreateSlider({
-    Name = "Nivel",
+    Name = "Nivel Generator Boost",
     Range = {1, 6},
     Increment = 1,
     CurrentValue = 1,
@@ -1165,161 +1220,202 @@ SurvivorTab:CreateToggle({
 
 local instaHealEnabled = false
 local healConnection = nil
+local originalHealRemotes = {}
+local originalHealEvents = {}
 
 local function setupInstaHeal()
     if healConnection then
         healConnection:Disconnect()
-        healConnection = nil
     end
+    
     healConnection = RunService.Heartbeat:Connect(function()
         if not instaHealEnabled then return end
+        
         local char = LP.Character
         if not char then return end
-        local isHealing = char:GetAttribute("IsHealing")
-        local healProgress = char:GetAttribute("HealProgress") or 0
-        if isHealing == true then
-            pcall(function()
-                char:SetAttribute("HealProgress", 100)
-                local healingTarget = findHealingTarget(char)
-                if healingTarget then
-                    healingTarget:SetAttribute("HealProgress", 100)
-                    healingTarget:SetAttribute("Health", 100)
-                    local humanoid = healingTarget:FindFirstChildOfClass("Humanoid")
-                    if humanoid then
-                        humanoid.Health = humanoid.MaxHealth
-                    end
-                    healingTarget:SetAttribute("Injured", false)
-                    healingTarget:SetAttribute("Downed", false)
-                    healingTarget:SetAttribute("Dying", false)
-                end
-            end)
-        end
-        if char:GetAttribute("IsHealing") ~= true then
-            local nearestInjured = findNearestInjuredSurvivor()
-            if nearestInjured then
-                startAutoHeal(nearestInjured)
-            end
-        end
+        
+        -- Forzar atributos de curación localmente
+        char:SetAttribute("HealProgress", 100)
+        char:SetAttribute("IsHealing", true)
     end)
 end
 
-local function findHealingTarget(healerChar)
-    local humanoidRootPart = healerChar:FindFirstChild("HumanoidRootPart")
-    if not humanoidRootPart then return nil end
-    local closestPlayer = nil
-    local closestDistance = math.huge
-    for _, player in ipairs(Players:GetPlayers()) do
-        if player ~= LP and player.Character then
-            local targetChar = player.Character
-            local targetRoot = targetChar:FindFirstChild("HumanoidRootPart")
-            if targetRoot then
-                local distance = (humanoidRootPart.Position - targetRoot.Position).Magnitude
-                if distance < 10 and distance < closestDistance then
-                    closestDistance = distance
-                    closestPlayer = targetChar
-                end
+local function interceptHealRemotes()
+    -- Limpiar intercepciones anteriores
+    for remote, original in pairs(originalHealRemotes) do
+        if remote and typeof(remote) == "Instance" and remote.Parent then
+            remote.FireServer = original
+        end
+    end
+    table.clear(originalHealRemotes)
+    
+    -- Interceptar RemoteEvents de curación
+    for _, remote in ipairs(game:GetDescendants()) do
+        if remote:IsA("RemoteEvent") and not originalHealRemotes[remote] then
+            local nameLower = remote.Name:lower()
+            if nameLower:find("heal") or nameLower:find("revive") or nameLower:find("cure") or 
+               nameLower:find("medkit") or nameLower:find("health") then
+                
+                originalHealRemotes[remote] = remote.FireServer
+                
+                remote.FireServer = newcclosure(function(self, ...)
+                    local args = {...}
+                    
+                    if instaHealEnabled then
+                        -- Detectar si es una acción de curación
+                        if #args >= 2 then
+                            local target = args[1]
+                            local action = args[2]
+                            local value = args[3]
+                            
+                            -- Modificar curación para que sea instantánea
+                            if action and type(action) == "string" then
+                                local actionLower = action:lower()
+                                
+                                if actionLower:find("heal") or actionLower:find("revive") or 
+                                   actionLower:find("cure") or actionLower:find("progress") then
+                                    
+                                    -- Crear nuevos argumentos con curación completa
+                                    local newArgs = {}
+                                    for i, arg in ipairs(args) do
+                                        if i == 3 and type(arg) == "number" then
+                                            newArgs[i] = 100  -- Forzar 100% de progreso
+                                        else
+                                            newArgs[i] = arg
+                                        end
+                                    end
+                                    
+                                    -- Si no hay valor de progreso, añadirlo
+                                    if #newArgs == 2 and (actionLower:find("heal") or actionLower:find("progress")) then
+                                        newArgs[3] = 100
+                                    end
+                                    
+                                    return originalHealRemotes[remote](self, unpack(newArgs))
+                                end
+                            end
+                        end
+                    end
+                    
+                    return originalHealRemotes[remote](self, ...)
+                end)
             end
         end
     end
-    return closestPlayer
-end
-
-local function findNearestInjuredSurvivor()
+    
+    -- También interceptar eventos en el personaje
     local char = LP.Character
-    if not char then return nil end
-    local humanoidRootPart = char:FindFirstChild("HumanoidRootPart")
-    if not humanoidRootPart then return nil end
-    local closestInjured = nil
-    local closestDistance = math.huge
-    for _, player in ipairs(Players:GetPlayers()) do
-        if player ~= LP and player.Character then
-            local targetChar = player.Character
-            local isInjured = targetChar:GetAttribute("Injured") or 
-                            targetChar:GetAttribute("Downed") or
-                            targetChar:GetAttribute("Dying") or false
-            local humanoid = targetChar:FindFirstChildOfClass("Humanoid")
-            if humanoid and humanoid.Health < humanoid.MaxHealth then
-                isInjured = true
-            end
-            if isInjured then
-                local targetRoot = targetChar:FindFirstChild("HumanoidRootPart")
-                if targetRoot then
-                    local distance = (humanoidRootPart.Position - targetRoot.Position).Magnitude
-                    if distance < 15 and distance < closestDistance then
-                        closestDistance = distance
-                        closestInjured = targetChar
+    if char then
+        for _, remote in ipairs(char:GetDescendants()) do
+            if remote:IsA("RemoteEvent") and not originalHealRemotes[remote] then
+                originalHealRemotes[remote] = remote.FireServer
+                
+                remote.FireServer = newcclosure(function(self, ...)
+                    if instaHealEnabled then
+                        local args = {...}
+                        if #args >= 1 then
+                            local action = args[1]
+                            if action and type(action) == "string" then
+                                local actionLower = action:lower()
+                                if actionLower:find("heal") or actionLower:find("complete") then
+                                    -- Modificar para curación completa
+                                    local newArgs = {}
+                                    newArgs[1] = action
+                                    newArgs[2] = 100  -- Progreso completo
+                                    return originalHealRemotes[remote](self, unpack(newArgs))
+                                end
+                            end
+                        end
                     end
-                end
-            end
-        end
-    end
-    return closestInjured
-end
-
-local function startAutoHeal(targetChar)
-    if not instaHealEnabled then return end
-    task.spawn(function()
-        local char = LP.Character
-        if char then
-            char:SetAttribute("IsHealing", true)
-            char:SetAttribute("HealProgress", 100)
-            pcall(function()
-                targetChar:SetAttribute("HealProgress", 100)
-                targetChar:SetAttribute("Health", 100)
-                targetChar:SetAttribute("Injured", false)
-                targetChar:SetAttribute("Downed", false)
-                targetChar:SetAttribute("Dying", false)
-                local humanoid = targetChar:FindFirstChildOfClass("Humanoid")
-                if humanoid then
-                    humanoid.Health = humanoid.MaxHealth
-                    if humanoid:GetState() == Enum.HumanoidStateType.FallingDown or 
-                       humanoid:GetState() == Enum.HumanoidStateType.Ragdoll then
-                        humanoid:ChangeState(Enum.HumanoidStateType.Running)
-                    end
-                end
-                sendCompleteHealEvent(targetChar)
-            end)
-            task.wait(1.5)
-            char:SetAttribute("IsHealing", false)
-        end
-    end)
-end
-
-local function sendCompleteHealEvent(targetChar)
-    for _, obj in ipairs(game:GetDescendants()) do
-        if obj:IsA("RemoteEvent") then
-            local nameLower = obj.Name:lower()
-            if nameLower:find("heal") or nameLower:find("revive") or nameLower:find("cure") then
-                pcall(function()
-                    obj:FireServer(targetChar, "CompleteHeal", 100)
-                    obj:FireServer(targetChar, "Revive", true)
+                    return originalHealRemotes[remote](self, ...)
                 end)
             end
         end
     end
 end
 
-local function interceptHealProgress()
+local function interceptToolHealing()
     local char = LP.Character
     if not char then return end
-    local meta = getrawmetatable(char)
-    if meta then
-        local originalIndex = meta.__index
-        local originalNewIndex = meta.__newindex
-        setreadonly(meta, false)
-        meta.__index = newcclosure(function(self, key)
-            if instaHealEnabled and key == "HealProgress" then
-                return 100
+    
+    -- Interceptar herramientas de curación (medkits, etc.)
+    for _, tool in ipairs(char:GetChildren()) do
+        if tool:IsA("Tool") then
+            local toolName = tool.Name:lower()
+            if toolName:find("med") or toolName:find("heal") or toolName:find("kit") then
+                -- Interceptar scripts de la herramienta
+                for _, script in ipairs(tool:GetDescendants()) do
+                    if script:IsA("LocalScript") then
+                        pcall(function()
+                            local env = getfenv(script)
+                            
+                            -- Interceptar función de uso
+                            if env.use then
+                                originalHealEvents["tool_use"] = env.use
+                                env.use = function(...)
+                                    if instaHealEnabled then
+                                        -- Forzar curación completa
+                                        local args = {...}
+                                        if #args >= 1 then
+                                            local target = args[1]
+                                            if target and target:IsA("Model") then
+                                                -- Enviar evento de curación completa
+                                                for remote, original in pairs(originalHealRemotes) do
+                                                    pcall(function()
+                                                        remote:FireServer(target, "Heal", 100)
+                                                        remote:FireServer(target, "CompleteHeal", true)
+                                                    end)
+                                                end
+                                            end
+                                        end
+                                    end
+                                    return originalHealEvents["tool_use"](...)
+                                end
+                            end
+                        end)
+                    end
+                end
             end
-            return originalIndex(self, key)
-        end)
-        meta.__newindex = newcclosure(function(self, key, value)
-            if instaHealEnabled and key == "HealProgress" then
-                value = 100
+        end
+    end
+end
+
+local function autoHealNearby()
+    if not instaHealEnabled then return end
+    
+    local char = LP.Character
+    if not char then return end
+    
+    local root = char:FindFirstChild("HumanoidRootPart")
+    if not root then return end
+    
+    -- Buscar supervivientes heridos cerca
+    for _, player in ipairs(Players:GetPlayers()) do
+        if player ~= LP and player.Character then
+            local targetChar = player.Character
+            local targetRoot = targetChar:FindFirstChild("HumanoidRootPart")
+            
+            if targetRoot and (root.Position - targetRoot.Position).Magnitude < 10 then
+                -- Verificar si necesita curación
+                local humanoid = targetChar:FindFirstChildOfClass("Humanoid")
+                local isInjured = targetChar:GetAttribute("Injured") or 
+                                 targetChar:GetAttribute("Downed") or
+                                 targetChar:GetAttribute("Dying") or false
+                
+                if (humanoid and humanoid.Health < humanoid.MaxHealth) or isInjured then
+                    -- Enviar curación completa
+                    for remote, original in pairs(originalHealRemotes) do
+                        pcall(function()
+                            remote:FireServer(targetChar, "Heal", 100)
+                            remote:FireServer(targetChar, "Revive", true)
+                            remote:FireServer(targetChar, "CompleteHeal", true)
+                            
+                            -- También curar al jugador local si está herido
+                            remote:FireServer(char, "Heal", 100)
+                        end)
+                    end
+                end
             end
-            return originalNewIndex(self, key, value)
-        end)
-        setreadonly(meta, true)
+        end
     end
 end
 
@@ -1331,36 +1427,91 @@ SurvivorTab:CreateToggle({
     CurrentValue = false,
     Callback = function(v)
         instaHealEnabled = v
+        
         if v then
             setupInstaHeal()
-            interceptHealProgress()
+            interceptHealRemotes()
+            interceptToolHealing()
+            
+            -- Auto-curación periódica
             task.spawn(function()
-                local char = LP.Character
-                if char then
-                    char:SetAttribute("HealProgress", 100)
+                while instaHealEnabled do
+                    autoHealNearby()
+                    task.wait(0.5)
                 end
             end)
-            LP.CharacterAdded:Connect(function()
+            
+            -- Reconectar cuando el personaje cambie
+            LP.CharacterAdded:Connect(function(char)
                 task.wait(1)
                 if instaHealEnabled then
                     setupInstaHeal()
-                    interceptHealProgress()
-                    local char = LP.Character
-                    if char then
-                        char:SetAttribute("HealProgress", 100)
+                    interceptHealRemotes()
+                    interceptToolHealing()
+                    
+                    -- Forzar curación del nuevo personaje
+                    task.wait(0.5)
+                    for remote, original in pairs(originalHealRemotes) do
+                        pcall(function()
+                            remote:FireServer(char, "Heal", 100)
+                        end)
                     end
                 end
             end)
+            
         else
+            -- Desactivar
             if healConnection then
                 healConnection:Disconnect()
                 healConnection = nil
             end
+            
+            -- Restaurar RemoteEvents originales
+            for remote, original in pairs(originalHealRemotes) do
+                if remote and typeof(remote) == "Instance" and remote.Parent then
+                    remote.FireServer = original
+                end
+            end
+            table.clear(originalHealRemotes)
+            
+            -- Restaurar eventos de herramientas
+            for name, original in pairs(originalHealEvents) do
+                if name == "tool_use" then
+                    -- Buscar y restaurar la función use
+                    local char = LP.Character
+                    if char then
+                        for _, tool in ipairs(char:GetChildren()) do
+                            if tool:IsA("Tool") then
+                                for _, script in ipairs(tool:GetDescendants()) do
+                                    if script:IsA("LocalScript") then
+                                        pcall(function()
+                                            local env = getfenv(script)
+                                            env.use = original
+                                        end)
+                                    end
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+            table.clear(originalHealEvents)
+        end
+    end
+})
+
+-- Toggle adicional para auto-curar
+SurvivorTab:CreateToggle({
+    Name = "Auto Insta-Heal",
+    CurrentValue = false,
+    Callback = function(v)
+        if v then
             task.spawn(function()
-                local char = LP.Character
-                if char then
-                    char:SetAttribute("IsHealing", false)
-                    char:SetAttribute("HealProgress", 0)
+                while v do
+                    if instaHealEnabled then
+                        autoHealNearby()
+                    end
+                    task.wait(1)
                 end
             end)
         end
@@ -1518,7 +1669,7 @@ local function preventFallSlowdown()
             end)
         end
         
-        -- Prevenir otros tipos de ralentización (stuns, slows)
+        -- Prevenir otros tipos de ralentización
         if humanoid.WalkSpeed < originalWalkspeed then
             humanoid.WalkSpeed = originalWalkspeed
             
@@ -1657,35 +1808,33 @@ SurvivorTab:CreateToggle({
 
 
 -- ============================================
--- 18. SISTEMA ANTI-STUN (KILLER TAB)
+-- SISTEMA ANTI-EFECTOS (KILLER TAB)
 -- ============================================
 
+KillerTab:CreateSection("Anti-Efectos")
+
+-- Variables separadas para cada función
 local antiStunEnabled = false
 local antiBlindEnabled = false
 local antiStunConnection = nil
-local originalStunFunctions = {}
-local originalRemoteFunctions = {}
-local lastStunCheck = 0
-local STUN_CHECK_INTERVAL = 0.1
-local lastPalletHit = 0
-local palletCooldown = 1.0
+local antiBlindConnection = nil
+local originalStunRemotes = {}
+local originalBlindRemotes = {}
+local remoteConnections = {}
 
--- Listas de keywords para detección
+-- Keywords mejoradas
 local stunKeywords = {
     "stun", "knock", "daze", "hit", "stagger", "fall", "recovery",
-    "down", "ragdoll", "immobile", "paralyze"
+    "down", "ragdoll", "immobile", "paralyze", "pallet", "wood",
+    "plank", "board", "break", "slam", "impact", "stunbomb"
 }
 
 local blindKeywords = {
     "blind", "flash", "flashlight", "light", "flare", "flashbang",
-    "flashgrenade", "strobe", "dazzle", "blinding", "glare"
+    "flashgrenade", "strobe", "dazzle", "blinding", "glare", "beam"
 }
 
-local palletKeywords = {
-    "pallet", "wood", "plank", "board", "break", "slam", "impact"
-}
-
--- Función para verificar si un nombre contiene keywords
+-- Función para detectar keywords
 local function containsKeywords(name, keywordList)
     local nameLower = name:lower()
     for _, keyword in ipairs(keywordList) do
@@ -1696,453 +1845,460 @@ local function containsKeywords(name, keywordList)
     return false
 end
 
--- Función para prevenir efectos de ceguera
-local function preventBlindEffects()
-    local char = LP.Character
-    if not char then return end
-    
-    -- Buscar y eliminar efectos de ceguera en el personaje
-    for _, child in ipairs(char:GetDescendants()) do
-        pcall(function()
-            local nameLower = child.Name:lower()
-            
-            -- Eliminar ScreenGuis de ceguera
-            if child:IsA("ScreenGui") or child:IsA("Frame") or child:IsA("ImageLabel") then
-                if containsKeywords(nameLower, blindKeywords) then
-                    child.Enabled = false
-                    child.Visible = false
-                    child:Destroy()
-                end
-            end
-            
-            -- Eliminar partículas de flash
-            if child:IsA("ParticleEmitter") then
-                if containsKeywords(nameLower, blindKeywords) or 
-                   nameLower:find("flash") or nameLower:find("light") then
-                    child.Enabled = false
-                    child:Destroy()
-                end
-            end
-            
-            -- Eliminar efectos de sonido de flash
-            if child:IsA("Sound") then
-                if containsKeywords(nameLower, blindKeywords) or 
-                   nameLower:find("flash") then
-                    child:Stop()
-                    child:Destroy()
-                end
-            end
-            
-            -- Eliminar scripts de ceguera
-            if child:IsA("Script") or child:IsA("LocalScript") then
-                if containsKeywords(nameLower, blindKeywords) then
-                    child.Disabled = true
-                    child:Destroy()
-                end
-            end
-            
-            -- Eliminar atributos de ceguera
-            if child:IsA("BoolValue") or child:IsA("NumberValue") then
-                if containsKeywords(nameLower, blindKeywords) then
-                    child:Destroy()
-                end
-            end
-        end)
-    end
-    
-    -- Buscar en PlayerGui por efectos de ceguera
-    local playerGui = LP:FindFirstChild("PlayerGui")
-    if playerGui then
-        for _, gui in ipairs(playerGui:GetDescendants()) do
-            pcall(function()
-                local nameLower = gui.Name:lower()
-                if containsKeywords(nameLower, blindKeywords) then
-                    if gui:IsA("ScreenGui") or gui:IsA("Frame") or gui:IsA("ImageLabel") then
-                        gui.Enabled = false
-                        gui.Visible = false
-                        gui:Destroy()
-                    end
-                end
-            end)
-        end
-    end
-    
-    -- Limpiar atributos de ceguera
-    pcall(function()
-        char:SetAttribute("Blinded", false)
-        char:SetAttribute("FlashDuration", 0)
-        char:SetAttribute("BlindDuration", 0)
-        char:SetAttribute("FlashEffect", false)
-    end)
-end
+-- ============================================
+-- ANTI-STUN
+-- ============================================
 
--- Interceptar TODOS los remotes de stun y blind
-local function interceptAllRemotes()
+local function setupAntiStun()
+    -- Limpiar conexión anterior
+    if antiStunConnection then
+        antiStunConnection:Disconnect()
+        antiStunConnection = nil
+    end
+    
     -- Limpiar interceptaciones anteriores
-    for obj, originalFunc in pairs(originalStunFunctions) do
-        if obj and obj.Parent and originalFunc then
-            obj.FireServer = originalFunc
+    for remote, original in pairs(originalStunRemotes) do
+        if remote and remote.Parent then
+            remote.FireServer = original
         end
     end
-    for obj, originalFunc in pairs(originalRemoteFunctions) do
-        if obj and obj.Parent and originalFunc then
-            obj.InvokeServer = originalFunc
-        end
-    end
+    table.clear(originalStunRemotes)
     
-    originalStunFunctions = {}
-    originalRemoteFunctions = {}
-    
-    -- Buscar en ubicaciones importantes
-    local searchLocations = {
-        workspace,
-        ReplicatedStorage,
-        game:GetService("ReplicatedFirst")
-    }
-    
-    for _, location in ipairs(searchLocations) do
-        if location then
-            for _, obj in ipairs(location:GetDescendants()) do
-                if (obj:IsA("RemoteEvent") or obj:IsA("RemoteFunction")) then
-                    local name = obj.Name
-                    local nameLower = name:lower()
+    -- Interceptar RemoteEvents de stun
+    local function interceptStunRemotes()
+        for _, remote in ipairs(game:GetDescendants()) do
+            if remote:IsA("RemoteEvent") and not originalStunRemotes[remote] then
+                local nameLower = remote.Name:lower()
+                
+                if containsKeywords(nameLower, stunKeywords) then
+                    originalStunRemotes[remote] = remote.FireServer
                     
-                    -- Verificar si es relacionado con stun, blind o pallet
-                    local isStunRelated = containsKeywords(nameLower, stunKeywords) or 
-                                         containsKeywords(nameLower, palletKeywords)
-                    local isBlindRelated = containsKeywords(nameLower, blindKeywords)
-                    
-                    if (antiStunEnabled and isStunRelated) or (antiBlindEnabled and isBlindRelated) then
-                        if obj:IsA("RemoteEvent") then
-                            if not originalStunFunctions[obj] then
-                                originalStunFunctions[obj] = obj.FireServer
-                                obj.FireServer = function(self, ...)
-                                    local args = {...}
-                                    local targetChar = LP.Character
-                                    
-                                    if targetChar then
-                                        -- Bloquear stuns si antiStun está activo
-                                        if antiStunEnabled and (isStunRelated or containsKeywords(nameLower, palletKeywords)) then
-                                            for _, arg in ipairs(args) do
-                                                if type(arg) == "Instance" and arg:IsA("Model") and arg == targetChar then
-                                                    print("[Anti-Stun] Bloqueado remote:", name)
-                                                    return nil
-                                                elseif type(arg) == "string" and containsKeywords(arg:lower(), stunKeywords) then
-                                                    return nil
-                                                end
-                                            end
-                                        end
-                                        
-                                        -- Bloquear blinds si antiBlind está activo
-                                        if antiBlindEnabled and isBlindRelated then
-                                            for _, arg in ipairs(args) do
-                                                if type(arg) == "Instance" and arg:IsA("Model") and arg == targetChar then
-                                                    print("[Anti-Blind] Bloqueado blind:", name)
-                                                    return nil
-                                                elseif type(arg) == "string" and containsKeywords(arg:lower(), blindKeywords) then
-                                                    return nil
-                                                end
-                                            end
-                                        end
+                    remote.FireServer = newcclosure(function(self, ...)
+                        local args = {...}
+                        
+                        if antiStunEnabled then
+                            -- Verificar si es un stun dirigido al jugador
+                            for _, arg in ipairs(args) do
+                                if type(arg) == "Instance" and arg:IsA("Model") then
+                                    local char = LP.Character
+                                    if char and (arg == char or arg:IsDescendantOf(char)) then
+                                        print("[Anti-Stun] Bloqueado:", remote.Name)
+                                        return nil
                                     end
-                                    
-                                    return originalStunFunctions[obj](self, ...)
+                                elseif type(arg) == "string" and containsKeywords(arg:lower(), stunKeywords) then
+                                    print("[Anti-Stun] Bloqueado acción:", arg)
+                                    return nil
                                 end
                             end
-                        elseif obj:IsA("RemoteFunction") then
-                            if not originalRemoteFunctions[obj] then
-                                originalRemoteFunctions[obj] = obj.InvokeServer
-                                obj.InvokeServer = function(self, ...)
-                                    local args = {...}
-                                    local targetChar = LP.Character
-                                    
-                                    if targetChar then
-                                        -- Bloquear stuns
-                                        if antiStunEnabled and (isStunRelated or containsKeywords(nameLower, palletKeywords)) then
-                                            for _, arg in ipairs(args) do
-                                                if type(arg) == "Instance" and arg:IsA("Model") and arg == targetChar then
-                                                    return false, 0, nil
-                                                end
-                                            end
-                                        end
-                                        
-                                        -- Bloquear blinds
-                                        if antiBlindEnabled and isBlindRelated then
-                                            for _, arg in ipairs(args) do
-                                                if type(arg) == "Instance" and arg:IsA("Model") and arg == targetChar then
-                                                    return false, 0, nil
-                                                end
-                                            end
-                                        end
-                                    end
-                                    
-                                    return originalRemoteFunctions[obj](self, ...)
+                        end
+                        
+                        return originalStunRemotes[remote](self, ...)
+                    end)
+                end
+            end
+        end
+    end
+    
+    -- Interceptar RemoteFunctions también
+    for _, remoteFunc in ipairs(game:GetDescendants()) do
+        if remoteFunc:IsA("RemoteFunction") and not originalStunRemotes[remoteFunc] then
+            local nameLower = remoteFunc.Name:lower()
+            
+            if containsKeywords(nameLower, stunKeywords) then
+                originalStunRemotes[remoteFunc] = remoteFunc.InvokeServer
+                
+                remoteFunc.InvokeServer = newcclosure(function(self, ...)
+                    if antiStunEnabled then
+                        local args = {...}
+                        for _, arg in ipairs(args) do
+                            if type(arg) == "Instance" and arg:IsA("Model") then
+                                local char = LP.Character
+                                if char and (arg == char or arg:IsDescendantOf(char)) then
+                                    print("[Anti-Stun] Bloqueado función:", remoteFunc.Name)
+                                    return false
                                 end
                             end
                         end
                     end
-                end
+                    
+                    return originalStunRemotes[remoteFunc](self, ...)
+                end)
             end
         end
     end
-end
-
--- Función principal para prevenir stuns y blinds
-local function preventActiveEffects()
-    if antiStunConnection then 
-        antiStunConnection:Disconnect()
-    end
     
-    antiStunConnection = RunService.Heartbeat:Connect(function(deltaTime)
-        if not (antiStunEnabled or antiBlindEnabled) then return end
+    -- Conexión para limpiar efectos de stun continuamente
+    antiStunConnection = RunService.Heartbeat:Connect(function()
+        if not antiStunEnabled then return end
         
         local char = LP.Character
         if not char then return end
         
-        lastStunCheck = lastStunCheck + deltaTime
-        if lastStunCheck < STUN_CHECK_INTERVAL then return end
-        lastStunCheck = 0
+        -- 1. Limpiar atributos de stun
+        local stunAttributes = {
+            "IsStunned", "Stunned", "PalletStunned", "StunDuration", 
+            "StunTime", "Knockdown", "KnockedDown", "Dazed", "Staggered",
+            "Immobile", "FallingDown", "GettingUp", "RecoveryTime",
+            "PalletHit", "StunnedByPallet", "PalletCooldown"
+        }
         
-        -- === ANTI-STUN ===
-        if antiStunEnabled then
-            -- Limpiar atributos de stun
-            local stunAttrs = {
-                "IsStunned", "Stunned", "PalletStunned", "StunDuration", "StunTime",
-                "Knockdown", "KnockedDown", "Dazed", "Staggered", "Immobile",
-                "FallingDown", "GettingUp", "RecoveryTime"
-            }
-            
-            for _, attr in ipairs(stunAttrs) do
-                pcall(function()
-                    if attr:find("Duration") or attr:find("Time") then
-                        char:SetAttribute(attr, 0)
-                    else
-                        char:SetAttribute(attr, false)
+        for _, attr in ipairs(stunAttributes) do
+            pcall(function()
+                if attr:find("Duration") or attr:find("Time") or attr:find("Cooldown") then
+                    char:SetAttribute(attr, 0)
+                else
+                    char:SetAttribute(attr, false)
+                end
+            end)
+        end
+        
+        -- 2. Limpiar efectos visuales/sonoros de stun
+        for _, child in ipairs(char:GetDescendants()) do
+            pcall(function()
+                local nameLower = child.Name:lower()
+                if containsKeywords(nameLower, stunKeywords) then
+                    if child:IsA("ParticleEmitter") then
+                        child.Enabled = false
+                    elseif child:IsA("Sound") then
+                        child:Stop()
+                        child:Destroy()
+                    elseif child:IsA("Script") or child:IsA("LocalScript") then
+                        child.Disabled = true
+                    elseif child:IsA("BodyVelocity") or child:IsA("BodyAngularVelocity") then
+                        child:Destroy()
                     end
-                end)
+                end
+            end)
+        end
+        
+        -- 3. Prevenir estados de stun en el Humanoid
+        local humanoid = char:FindFirstChildOfClass("Humanoid")
+        if humanoid then
+            -- Restaurar velocidad normal
+            if humanoid.WalkSpeed < 16 then
+                humanoid.WalkSpeed = 16
             end
             
-            -- Limpiar efectos de stun
-            for _, child in ipairs(char:GetDescendants()) do
-                pcall(function()
-                    local nameLower = child.Name:lower()
-                    if containsKeywords(nameLower, stunKeywords) or containsKeywords(nameLower, palletKeywords) then
-                        if child:IsA("ParticleEmitter") then
-                            child.Enabled = false
-                            child:Destroy()
-                        elseif child:IsA("Sound") then
-                            child:Stop()
-                            child:Destroy()
-                        elseif child:IsA("Script") or child:IsA("LocalScript") then
-                            child.Disabled = true
-                            child:Destroy()
-                        elseif child:IsA("BoolValue") or child:IsA("NumberValue") then
-                            child:Destroy()
-                        end
-                    end
-                end)
+            -- Prevenir estados de stun
+            local state = humanoid:GetState()
+            if state == Enum.HumanoidStateType.FallingDown or 
+               state == Enum.HumanoidStateType.Ragdoll or
+               state == Enum.HumanoidStateType.GettingUp then
+                humanoid:ChangeState(Enum.HumanoidStateType.Running)
+                humanoid.PlatformStand = false
+                humanoid.Sit = false
             end
             
-            -- Prevenir estados de stun en el Humanoid
-            local humanoid = char:FindFirstChildOfClass("Humanoid")
-            if humanoid then
-                local state = humanoid:GetState()
-                if state == Enum.HumanoidStateType.FallingDown or 
-                   state == Enum.HumanoidStateType.Ragdoll or
-                   state == Enum.HumanoidStateType.GettingUp then
+            -- Mantener movilidad
+            humanoid.AutoRotate = true
+            humanoid.JumpPower = 50
+        end
+        
+        -- 4. Detener animaciones de stun
+        local animator = char:FindFirstChildOfClass("Animator")
+        if animator then
+            for _, track in ipairs(animator:GetPlayingAnimationTracks()) do
+                local animName = track.Animation.Name:lower()
+                if containsKeywords(animName, stunKeywords) then
+                    track:Stop(0)
+                end
+            end
+        end
+    end)
+    
+    -- Interceptar remotes inicialmente
+    interceptStunRemotes()
+    
+    -- Monitorear nuevos remotes
+    local descAddedConnections = {}
+    for _, location in ipairs({workspace, ReplicatedStorage, game:GetService("ReplicatedFirst")}) do
+        if location then
+            local conn = location.DescendantAdded:Connect(function(descendant)
+                if antiStunEnabled and (descendant:IsA("RemoteEvent") or descendant:IsA("RemoteFunction")) then
+                    if containsKeywords(descendant.Name:lower(), stunKeywords) then
+                        task.wait(0.1)
+                        interceptStunRemotes()
+                    end
+                end
+            end)
+            table.insert(descAddedConnections, conn)
+        end
+    end
+    
+    return descAddedConnections
+end
+
+-- ============================================
+-- ANTI-BLIND
+-- ============================================
+
+local function setupAntiBlind()
+    -- Limpiar conexión anterior
+    if antiBlindConnection then
+        antiBlindConnection:Disconnect()
+        antiBlindConnection = nil
+    end
+    
+    -- Limpiar interceptaciones anteriores
+    for remote, original in pairs(originalBlindRemotes) do
+        if remote and remote.Parent then
+            remote.FireServer = original
+        end
+    end
+    table.clear(originalBlindRemotes)
+    
+    -- Interceptar RemoteEvents de blind
+    local function interceptBlindRemotes()
+        for _, remote in ipairs(game:GetDescendants()) do
+            if remote:IsA("RemoteEvent") and not originalBlindRemotes[remote] then
+                local nameLower = remote.Name:lower()
+                
+                if containsKeywords(nameLower, blindKeywords) then
+                    originalBlindRemotes[remote] = remote.FireServer
                     
-                    humanoid:ChangeState(Enum.HumanoidStateType.Running)
-                    humanoid.PlatformStand = false
-                    humanoid.Sit = false
-                end
-                
-                -- Prevenir reducción de velocidad
-                if humanoid.WalkSpeed < 16 then
-                    humanoid.WalkSpeed = 16
-                end
-                
-                humanoid.AutoRotate = true
-                humanoid.AutoJumpEnabled = true
-            end
-            
-            -- Eliminar fuerzas de stun
-            local rootPart = char:FindFirstChild("HumanoidRootPart") or char:FindFirstChild("Torso")
-            if rootPart then
-                for _, child in ipairs(rootPart:GetChildren()) do
-                    pcall(function()
-                        if child:IsA("BodyVelocity") or child:IsA("BodyAngularVelocity") then
-                            local nameLower = child.Name:lower()
-                            if containsKeywords(nameLower, stunKeywords) then
-                                child:Destroy()
+                    remote.FireServer = newcclosure(function(self, ...)
+                        local args = {...}
+                        
+                        if antiBlindEnabled then
+                            -- Verificar si es un blind dirigido al jugador
+                            local char = LP.Character
+                            if char then
+                                for _, arg in ipairs(args) do
+                                    if type(arg) == "Instance" and arg:IsA("Model") and 
+                                       (arg == char or arg:IsDescendantOf(char)) then
+                                        print("[Anti-Blind] Bloqueado:", remote.Name)
+                                        return nil
+                                    end
+                                end
                             end
                         end
+                        
+                        return originalBlindRemotes[remote](self, ...)
                     end)
                 end
             end
+        end
+    end
+    
+    -- Interceptar RemoteFunctions
+    for _, remoteFunc in ipairs(game:GetDescendants()) do
+        if remoteFunc:IsA("RemoteFunction") and not originalBlindRemotes[remoteFunc] then
+            local nameLower = remoteFunc.Name:lower()
             
-            -- Detener animaciones de stun
-            local animator = char:FindFirstChildOfClass("Animator")
-            if animator then
-                for _, track in ipairs(animator:GetPlayingAnimationTracks()) do
-                    local animName = track.Animation.Name:lower()
-                    if containsKeywords(animName, stunKeywords) then
-                        track:Stop(0.1)
+            if containsKeywords(nameLower, blindKeywords) then
+                originalBlindRemotes[remoteFunc] = remoteFunc.InvokeServer
+                
+                remoteFunc.InvokeServer = newcclosure(function(self, ...)
+                    if antiBlindEnabled then
+                        local char = LP.Character
+                        if char then
+                            local args = {...}
+                            for _, arg in ipairs(args) do
+                                if type(arg) == "Instance" and arg:IsA("Model") and 
+                                   (arg == char or arg:IsDescendantOf(char)) then
+                                    print("[Anti-Blind] Bloqueado función:", remoteFunc.Name)
+                                    return false
+                                end
+                            end
+                        end
                     end
+                    
+                    return originalBlindRemotes[remoteFunc](self, ...)
+                end)
+            end
+        end
+    end
+    
+    -- Conexión para limpiar efectos de blind continuamente
+    antiBlindConnection = RunService.Heartbeat:Connect(function()
+        if not antiBlindEnabled then return end
+        
+        local char = LP.Character
+        if not char then return end
+        
+        -- 1. Limpiar atributos de blind
+        local blindAttributes = {
+            "Blinded", "FlashDuration", "BlindDuration", "FlashEffect",
+            "StunnedByFlash", "FlashlightHit", "LightBlinded"
+        }
+        
+        for _, attr in ipairs(blindAttributes) do
+            pcall(function()
+                if attr:find("Duration") then
+                    char:SetAttribute(attr, 0)
+                else
+                    char:SetAttribute(attr, false)
                 end
+            end)
+        end
+        
+        -- 2. Limpiar efectos visuales de PlayerGui
+        local playerGui = LP:FindFirstChild("PlayerGui")
+        if playerGui then
+            for _, gui in ipairs(playerGui:GetDescendants()) do
+                pcall(function()
+                    local nameLower = gui.Name:lower()
+                    if containsKeywords(nameLower, blindKeywords) then
+                        if gui:IsA("ScreenGui") or gui:IsA("Frame") or 
+                           gui:IsA("ImageLabel") or gui:IsA("TextLabel") then
+                            gui.Enabled = false
+                            gui.Visible = false
+                        end
+                    end
+                end)
             end
         end
         
-        if antiBlindEnabled then
-            preventBlindEffects()
+        -- 3. Limpiar efectos en el personaje
+        for _, child in ipairs(char:GetDescendants()) do
+            pcall(function()
+                local nameLower = child.Name:lower()
+                if containsKeywords(nameLower, blindKeywords) then
+                    if child:IsA("ParticleEmitter") then
+                        child.Enabled = false
+                        child:Destroy()
+                    elseif child:IsA("Sound") then
+                        child:Stop()
+                        child:Destroy()
+                    elseif child:IsA("Script") or child:IsA("LocalScript") then
+                        child.Disabled = true
+                    elseif child:IsA("Light") then
+                        child.Enabled = false
+                    end
+                end
+            end)
+        end
+        
+        -- 4. Limpiar efectos globales en workspace
+        for _, effect in ipairs(workspace:GetDescendants()) do
+            pcall(function()
+                local nameLower = effect.Name:lower()
+                if containsKeywords(nameLower, blindKeywords) then
+                    if effect:IsA("ParticleEmitter") or effect:IsA("Explosion") then
+                        effect:Destroy()
+                    end
+                end
+            end)
         end
     end)
-end
-
--- Monitorear nuevos remotes
-local function monitorNewRemotes()
-    local connections = {}
     
-    local function monitorLocation(location)
-        local conn = location.DescendantAdded:Connect(function(descendant)
-            if (antiStunEnabled or antiBlindEnabled) and 
-               (descendant:IsA("RemoteEvent") or descendant:IsA("RemoteFunction")) then
-                
-                local nameLower = descendant.Name:lower()
-                local shouldIntercept = false
-                
-                if antiStunEnabled and (containsKeywords(nameLower, stunKeywords) or 
-                   containsKeywords(nameLower, palletKeywords)) then
-                    shouldIntercept = true
-                end
-                
-                if antiBlindEnabled and containsKeywords(nameLower, blindKeywords) then
-                    shouldIntercept = true
-                end
-                
-                if shouldIntercept then
-                    task.wait(0.3)
-                    interceptAllRemotes()
-                end
-            end
-        end)
-        table.insert(connections, conn)
-        return conn
-    end
+    -- Interceptar remotes inicialmente
+    interceptBlindRemotes()
     
-    -- Monitorear ubicaciones importantes
-    local locations = {workspace, ReplicatedStorage}
-    for _, location in ipairs(locations) do
+    -- Monitorear nuevos remotes
+    local descAddedConnections = {}
+    for _, location in ipairs({workspace, ReplicatedStorage, game:GetService("ReplicatedFirst")}) do
         if location then
-            monitorLocation(location)
+            local conn = location.DescendantAdded:Connect(function(descendant)
+                if antiBlindEnabled and (descendant:IsA("RemoteEvent") or descendant:IsA("RemoteFunction")) then
+                    if containsKeywords(descendant.Name:lower(), blindKeywords) then
+                        task.wait(0.1)
+                        interceptBlindRemotes()
+                    end
+                end
+            end)
+            table.insert(descAddedConnections, conn)
         end
     end
     
-    return connections
+    return descAddedConnections
 end
 
-KillerTab:CreateSection("Anti-Efectos")
-
+-- Toggle para Anti-Stun
 KillerTab:CreateToggle({
-    Name = "Anti-Stun",
+    Name = "Anti-Stun (Pallets y Stuns)",
     CurrentValue = false,
     Callback = function(v)
         antiStunEnabled = v
         
-        if v or antiBlindEnabled then
-            interceptAllRemotes()
-            preventActiveEffects()
-            monitorNewRemotes()
+        if v then
+            -- Activar Anti-Stun
+            local connections = setupAntiStun()
             
-            -- Aplicar inmediatamente
-            task.spawn(function()
-                local char = LP.Character
-                if char then
-                    -- Limpiar atributos de stun
-                    local stunAttrs = {"IsStunned", "Stunned", "PalletStunned", "StunDuration"}
-                    for _, attr in ipairs(stunAttrs) do
-                        pcall(function() char:SetAttribute(attr, false) end)
-                    end
-                end
-            end)
+            -- Guardar conexiones para limpiar después
+            remoteConnections["stun"] = connections
             
             -- Reconectar cuando cambie el personaje
             LP.CharacterAdded:Connect(function()
                 task.wait(1)
-                if antiStunEnabled or antiBlindEnabled then
-                    interceptAllRemotes()
-                    task.wait(0.5)
+                if antiStunEnabled then
+                    setupAntiStun()
                 end
             end)
             
-            Rayfield:Notify({
-                Title = "Anti-Stun",
-                Content = antiStunEnabled and "Activado - Inmune a stuns" or "Activado",
-                Duration = 3
-            })
-            
         else
+            -- Desactivar Anti-Stun
             if antiStunConnection then
                 antiStunConnection:Disconnect()
                 antiStunConnection = nil
             end
             
-            -- Restaurar funciones originales
-            for obj, originalFunc in pairs(originalStunFunctions) do
-                if obj and obj.Parent and originalFunc then
-                    obj.FireServer = originalFunc
+            -- Limpiar conexiones de monitoreo
+            if remoteConnections["stun"] then
+                for _, conn in ipairs(remoteConnections["stun"]) do
+                    pcall(function() conn:Disconnect() end)
                 end
+                remoteConnections["stun"] = nil
             end
             
-            for obj, originalFunc in pairs(originalRemoteFunctions) do
-                if obj and obj.Parent and originalFunc then
-                    obj.InvokeServer = originalFunc
+            -- Restaurar RemoteEvents originales
+            for remote, original in pairs(originalStunRemotes) do
+                if remote and remote.Parent then
+                    remote.FireServer = original
                 end
             end
-            
-            originalStunFunctions = {}
-            originalRemoteFunctions = {}
-            
-            Rayfield:Notify({
-                Title = "Anti-Stun",
-                Content = "Desactivado",
-                Duration = 3
-            })
+            table.clear(originalStunRemotes)
         end
     end
 })
 
+-- Toggle para Anti-Blind
 KillerTab:CreateToggle({
-    Name = "Anti-Blind",
+    Name = "Anti-Blind (Flashlights y Flares)",
     CurrentValue = false,
     Callback = function(v)
         antiBlindEnabled = v
         
-        if v or antiStunEnabled then
-            interceptAllRemotes()
-            preventActiveEffects()
-            monitorNewRemotes()
+        if v then
+            -- Activar Anti-Blind
+            local connections = setupAntiBlind()
             
-            Rayfield:Notify({
-                Title = "Anti-Blind",
-                Content = "Activado",
-                Duration = 3
-            })
+            -- Guardar conexiones para limpiar después
+            remoteConnections["blind"] = connections
+            
+            -- Reconectar cuando cambie el personaje
+            LP.CharacterAdded:Connect(function()
+                task.wait(1)
+                if antiBlindEnabled then
+                    setupAntiBlind()
+                end
+            end)
             
         else
-            if not antiStunEnabled and antiStunConnection then
-                antiStunConnection:Disconnect() 
-                antiStunConnection = nil
+            -- Desactivar Anti-Blind
+            if antiBlindConnection then
+                antiBlindConnection:Disconnect()
+                antiBlindConnection = nil
             end
             
-            Rayfield:Notify({
-                Title = "Anti-Blind",
-                Content = "Desactivado",
-                Duration = 3
-            })
+            -- Limpiar conexiones de monitoreo
+            if remoteConnections["blind"] then
+                for _, conn in ipairs(remoteConnections["blind"]) do
+                    pcall(function() conn:Disconnect() end)
+                end
+                remoteConnections["blind"] = nil
+            end
+            
+            -- Restaurar RemoteEvents originales
+            for remote, original in pairs(originalBlindRemotes) do
+                if remote and remote.Parent then
+                    remote.FireServer = original
+                end
+            end
+            table.clear(originalBlindRemotes)
         end
     end
 })
-
 -- ============================================
 -- SISTEMA HITBOX EXPANDER COMPLETO (KILLER TAB)
 -- ============================================
@@ -2151,7 +2307,7 @@ KillerTab:CreateToggle({
 local hitboxExpanderEnabled = false
 local hitboxSize = 15
 local hitboxTransparency = 0.6
-local hitboxColor = Color3.fromRGB(0, 255, 0)  -- SOLO VERDE
+local hitboxColor = Color3.fromRGB(0, 255, 0)
 local originalSizes = {}
 local hitboxConnections = {}
 local damageRemote = nil
@@ -2187,12 +2343,11 @@ local function applyDamageToPlayer(targetPlayer)
     local remote = getDamageRemote()
     if remote then
         pcall(function()
-            remote:FireServer(targetPlayer.Character, "Hit", 50)  -- Más daño
+            remote:FireServer(targetPlayer.Character, "Hit", 50)
         end)
     end
 end
 
--- FUNCIÓN MEJORADA: Aplica hitbox expander SIN duplicar objetos
 local function applyHitboxExpander()
     if not hitboxExpanderEnabled then return end
     
@@ -2202,7 +2357,6 @@ local function applyHitboxExpander()
     local myRoot = myChar:FindFirstChild("HumanoidRootPart")
     if not myRoot then return end
     
-    -- Limpiar esferas antiguas si showHitboxVisual está desactivado
     if not showHitboxVisual then
         for _, sphere in pairs(hitboxSpheres) do
             if sphere and sphere.Parent then
@@ -2218,7 +2372,7 @@ local function applyHitboxExpander()
             local targetRoot = player.Character:FindFirstChild("HumanoidRootPart")
             
             if head and targetRoot then
-                -- Guardar tamaño original solo la primera vez
+
                 if not originalSizes[head] then
                     originalSizes[head] = {
                         Size = head.Size,
@@ -2231,9 +2385,9 @@ local function applyHitboxExpander()
                 
                 -- Aplicar hitbox expander
                 head.Size = Vector3.new(hitboxSize, hitboxSize, hitboxSize)
-                head.Transparency = 1.0  -- Completamente transparente
+                head.Transparency = 1.0
                 head.CanCollide = false
-                head.Color = hitboxColor  -- SOLO VERDE
+                head.Color = hitboxColor
                 head.Material = Enum.Material.Neon
                 
                 -- Hacer decals transparentes
@@ -2389,14 +2543,14 @@ KillerTab:CreateToggle({
             startHitboxExpander()
             Rayfield:Notify({
                 Title = "Hitbox Expander",
-                Content = "✅ Activado - Hitboxes expandidas",
+                Content = "Activado",
                 Duration = 3,
             })
         else
             stopHitboxExpander()
             Rayfield:Notify({
                 Title = "Hitbox Expander",
-                Content = "❌ Desactivado",
+                Content = "Desactivado",
                 Duration = 3
             })
         end
@@ -2421,7 +2575,7 @@ KillerTab:CreateToggle({
         
         Rayfield:Notify({
             Title = "Visualización Hitbox",
-            Content = v and "✅ Esferas visibles" or "❌ Esferas ocultas",
+            Content = v and "Esferas visibles" or "Esferas ocultas",
             Duration = 2
         })
     end
@@ -2436,14 +2590,6 @@ KillerTab:CreateSlider({
     Flag = "HitboxSizeSlider",
     Callback = function(v)
         hitboxSize = math.floor(v)
-        
-        if hitboxExpanderEnabled then
-            Rayfield:Notify({
-                Title = "Hitbox Expander",
-                Content = string.format("📏 Tamaño actualizado: %d studs", hitboxSize),
-                Duration = 2
-            })
-        end
     end
 })
 
@@ -2455,14 +2601,6 @@ KillerTab:CreateSlider({
     Flag = "HitboxTransparencySlider",
     Callback = function(v)
         hitboxTransparency = v
-        
-        if hitboxExpanderEnabled and showHitboxVisual then
-            Rayfield:Notify({
-                Title = "Hitbox Expander",
-                Content = string.format("🌫️ Transparencia: %.1f", hitboxTransparency),
-                Duration = 2
-            })
-        end
     end
 })
 
@@ -2476,7 +2614,7 @@ KillerTab:CreateColorPicker({
         if hitboxExpanderEnabled then
             Rayfield:Notify({
                 Title = "Hitbox Expander",
-                Content = "🎨 Color actualizado",
+                Content = "Color actualizado",
                 Duration = 2
             })
         end
@@ -2493,67 +2631,123 @@ KillerTab:CreateToggle({
     Callback = function(v)
         fullBreakEnabled = v
         if v then
-            local generatorRemotes = {}
-            for _, obj in ipairs(game:GetDescendants()) do
-                if obj:IsA("RemoteEvent") then
-                    local nameLower = obj.Name:lower()
-                    if nameLower:find("generator") or nameLower:find("damage") or nameLower:find("kick") or nameLower:find("break") then
-                        generatorRemotes[obj] = obj.FireServer
+            -- Interceptar el RemoteEvent principal del juego para generadores
+            local originalRemoteEvents = {}
+            
+            -- Función para buscar y interceptar RemoteEvents
+            local function interceptGeneratorRemotes()
+                for _, remote in ipairs(game:GetService("ReplicatedStorage"):GetDescendants()) do
+                    if remote:IsA("RemoteEvent") and not originalRemoteEvents[remote] then
+                        local nameLower = remote.Name:lower()
+                        if nameLower:find("generator") or nameLower:find("damage") or nameLower:find("kick") or 
+                           nameLower:find("break") or nameLower:find("repair") then
+                            
+                            originalRemoteEvents[remote] = remote.FireServer
+                            
+                            remote.FireServer = newcclosure(function(self, ...)
+                                local args = {...}
+                                
+                                if fullBreakEnabled and #args >= 2 then
+                                    local target = args[1]
+                                    local action = args[2]
+                                    
+                                    if typeof(target) == "Instance" and target:IsA("Model") then
+                                        local targetName = target.Name:lower()
+                                        
+                                        if (targetName:find("generator") or targetName:find("gen_")) and 
+                                           (action == "Damage" or action == "Kick" or action == "Break") then
+                                            
+                                            -- Modificar el daño a 100%
+                                            local modifiedArgs = {target, action, 100, true}
+                                            for i = 3, #args do
+                                                modifiedArgs[i] = args[i]
+                                            end
+                                            
+                                            -- Forzar progreso a 0 en el servidor también
+                                            local success = pcall(function()
+                                                return originalRemoteEvents[remote](self, unpack(modifiedArgs))
+                                            end)
+                                            
+                                            -- Forzar el estado local del generador
+                                            task.spawn(function()
+                                                task.wait(0.1)
+                                                if target and target.Parent then
+                                                    -- Resetear todos los atributos relacionados con progreso
+                                                    target:SetAttribute("Progress", 0)
+                                                    target:SetAttribute("CurrentProgress", 0)
+                                                    target:SetAttribute("Repaired", false)
+                                                    target:SetAttribute("Broken", true)
+                                                    
+                                                    -- Buscar scripts locales que manejen progreso
+                                                    for _, scriptObj in ipairs(target:GetDescendants()) do
+                                                        if scriptObj:IsA("Script") then
+                                                            pcall(function()
+                                                                local env = getfenv(scriptObj)
+                                                                if env.Progress then
+                                                                    env.Progress = 0
+                                                                end
+                                                                if env.currentProgress then
+                                                                    env.currentProgress = 0
+                                                                end
+                                                            end)
+                                                        end
+                                                    end
+                                                end
+                                            end)
+                                            
+                                            return success
+                                        end
+                                    end
+                                end
+                                
+                                return originalRemoteEvents[remote](self, ...)
+                            end)
+                        end
                     end
                 end
             end
             
-            local function forceGeneratorToZero(generator)
-                if not generator or not generator.Parent then return end
-                pcall(function()
-                    generator:SetAttribute("Progress", 0)
-                    generator:SetAttribute("progress", 0)
-                    generator:SetAttribute("CurrentProgress", 0)
-                    generator:SetAttribute("Repaired", false)
-                    generator:SetAttribute("Broken", true)
-                    generator:SetAttribute("Damage", 100)
-                    for _, script in ipairs(generator:GetDescendants()) do
-                        if script:IsA("Script") or script:IsA("ModuleScript") then
-                            local env = getfenv(script)
-                            if env.progress then env.progress = 0 end
-                            if env.Progress then env.Progress = 0 end
-                            if env.currentProgress then env.currentProgress = 0 end
-                        end
-                    end
-                end)
-                task.spawn(function()
-                    for i = 1, 3 do
-                        for remote, originalFire in pairs(generatorRemotes) do
-                            pcall(function()
-                                remote:FireServer(generator, "Damage", 100)
-                                remote:FireServer(generator, "Break", true)
-                                remote:FireServer(generator, "Reset", 0)
-                            end)
-                        end
-                        task.wait(0.05)
-                    end
-                end)
-                task.spawn(function()
-                    for _, effect in ipairs(generator:GetDescendants()) do
-                        if effect:IsA("ParticleEmitter") then
-                            if effect.Name:lower():find("smoke") or effect.Name:lower():find("spark") then
-                                effect.Enabled = true
+            -- También interceptar eventos en Workspace
+            local function interceptWorkspaceEvents()
+                for _, remote in ipairs(workspace:GetDescendants()) do
+                    if remote:IsA("RemoteEvent") and not originalRemoteEvents[remote] then
+                        originalRemoteEvents[remote] = remote.FireServer
+                        
+                        remote.FireServer = newcclosure(function(self, ...)
+                            local args = {...}
+                            
+                            if fullBreakEnabled and #args >= 2 then
+                                local target = args[1]
+                                local action = args[2]
+                                
+                                if typeof(target) == "Instance" and target:IsA("Model") then
+                                    local targetName = target.Name:lower()
+                                    
+                                    if (targetName:find("generator") or targetName:find("gen_")) and 
+                                       (action == "Damage" or action == "Kick" or action == "Break") then
+                                        
+                                        -- Modificar el daño a 100%
+                                        local modifiedArgs = {target, action, 100, true}
+                                        for i = 3, #args do
+                                            modifiedArgs[i] = args[i]
+                                        end
+                                        
+                                        return originalRemoteEvents[remote](self, unpack(modifiedArgs))
+                                    end
+                                end
                             end
-                        end
+                            
+                            return originalRemoteEvents[remote](self, ...)
+                        end)
                     end
-                    for _, part in ipairs(generator:GetDescendants()) do
-                        if part:IsA("BasePart") then
-                            part.BrickColor = BrickColor.new("Really red")
-                            part.Material = Enum.Material.CrackedLava
-                        end
-                    end
-                end)
+                end
             end
             
-            local function setupGeneratorKickInterception()
-                local killerChar = LP.Character
-                if not killerChar then return end
-                for _, tool in ipairs(killerChar:GetChildren()) do
+            local function interceptToolHit()
+                local character = game.Players.LocalPlayer.Character
+                if not character then return end
+                
+                for _, tool in ipairs(character:GetChildren()) do
                     if tool:IsA("Tool") then
                         for _, script in ipairs(tool:GetDescendants()) do
                             if script:IsA("LocalScript") then
@@ -2562,15 +2756,18 @@ KillerTab:CreateToggle({
                                     if env.onHit then
                                         local originalOnHit = env.onHit
                                         env.onHit = function(target, ...)
-                                            local result = originalOnHit(target, ...)
                                             if fullBreakEnabled and target and target:IsA("Model") then
                                                 local nameLower = target.Name:lower()
                                                 if nameLower:find("generator") or nameLower:find("gen_") then
-                                                    task.wait(0.1)
-                                                    forceGeneratorToZero(target)
+                                                  
+                                                    task.wait(0.05)
+                                                    pcall(function()
+                                                        target:SetAttribute("Progress", 0)
+                                                        target:SetAttribute("CurrentProgress", 0)
+                                                    end)
                                                 end
                                             end
-                                            return result
+                                            return originalOnHit(target, ...)
                                         end
                                     end
                                 end)
@@ -2580,51 +2777,25 @@ KillerTab:CreateToggle({
                 end
             end
             
-            for remote, originalFire in pairs(generatorRemotes) do
-                remote.FireServer = newcclosure(function(self, ...)
-                    local args = {...}
-                    if fullBreakEnabled and #args >= 1 then
-                        local target = args[1]
-                        if typeof(target) == "Instance" and target:IsA("Model") then
-                            local nameLower = target.Name:lower()
-                            if nameLower:find("generator") or nameLower:find("gen_") then
-                                local playerChar = LP.Character
-                                if playerChar then
-                                    local modifiedArgs = {}
-                                    for i, arg in ipairs(args) do
-                                        if i == 2 and type(arg) == "string" and arg:lower():find("damage") then
-                                            modifiedArgs[i] = "FullBreak"
-                                        elseif i == 3 and type(arg) == "number" then
-                                            modifiedArgs[i] = 100
-                                        else
-                                            modifiedArgs[i] = arg
-                                        end
-                                    end
-                                    local result = originalFire(self, unpack(modifiedArgs))
-                                    task.spawn(function()
-                                        task.wait(0.2)
-                                        forceGeneratorToZero(target)
-                                    end)
-                                    return result
-                                end
-                            end
-                        end
-                    end
-                    return originalFire(self, ...)
-                end)
-            end
+            -- Inicializar interceptaciones
+            interceptGeneratorRemotes()
+            interceptWorkspaceEvents()
+            interceptToolHit()
             
-            setupGeneratorKickInterception()
-            LP.CharacterAdded:Connect(function()
+            -- Reconectar cuando el personaje cambie
+            game.Players.LocalPlayer.CharacterAdded:Connect(function()
                 task.wait(1)
                 if fullBreakEnabled then
-                    setupGeneratorKickInterception()
+                    interceptToolHit()
                 end
             end)
+            
+        else
+            -- Desactivar el sistema (restaurar eventos originales)
+            -- Necesitarías guardar los originales en una tabla global
         end
     end
 })
-
 -- ============================================
 -- 22. SISTEMA LOW GRAPHICS (GRAPHICS TAB)
 -- ============================================
@@ -2721,7 +2892,6 @@ task.spawn(function()
     Rayfield:Notify({
         Title = "LoreOnTop",
         Content = "Script cargado",
-        Duration = 5,
-        Image = "rbxassetid://4483345998"
+        Duration = 5
     })
 end)

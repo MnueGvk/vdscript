@@ -33,18 +33,16 @@ local function firstBasePart(inst)
 end
 
 -- ============================================
--- 3. VARIABLES GLOBALES Y CACHE OPTIMIZADAS
+-- 3. VARIABLES GLOBALES Y CACHE
 -- ============================================
 
 local playerCache = {}
 local connections = {}
 local espObjects = {}
 
--- Optimización: Tabla de búsqueda rápida para roles
 local roleCache = {}
 local playerColors = {}
 
--- Optimización: Cache para generadores
 local generatorCache = {
     items = {},
     lastUpdate = 0,
@@ -62,7 +60,7 @@ local lobbyColor = Color3.fromRGB(200, 200, 200)
 local generatorColor = Color3.fromRGB(0, 170, 255)
 
 -- ============================================
--- 5. FUNCIONES DE DETECCIÓN DE ROLES OPTIMIZADAS
+-- 5. FUNCIONES DE DETECCIÓN DE ROLES
 -- ============================================
 
 local function getRole(p)
@@ -127,7 +125,7 @@ local function getPlayerColor(p)
 end
 
 -- ============================================
--- 6. FUNCIONES DE ESP Y HIGHLIGHTS OPTIMIZADAS
+-- 6. FUNCIONES DE ESP Y HIGHLIGHTS
 -- ============================================
 
 local function makeBillboard(text, color3, parent)
@@ -241,7 +239,7 @@ local GraphicsTab = Window:CreateTab("Graphics")
 local MiscTab = Window:CreateTab("Misc")
 
 -- ============================================
--- 9. SISTEMA PLAYER ESP OPTIMIZADO
+-- 9. SISTEMA PLAYER ESP
 -- ============================================
 
 local playerESPEnabled = false
@@ -250,7 +248,6 @@ local espLoopConn = nil
 local lastPlayerESPUpdate = 0
 local PLAYER_ESP_INTERVAL = 1.5
 
--- Optimización: Limpiar cache periódicamente
 local function cleanStaleCache()
     local now = tick()
     for player, cache in pairs(playerCache) do
@@ -280,19 +277,17 @@ end
 local function applyOptimizedPlayerESP(p)
     if p == LP then return end
     
-    -- Verificación rápida
     local character = p.Character
     if not (character and alive(character)) then
         cleanPlayerESP(p)
         return
     end
     
-    -- Cache de datos del jugador
     local cache = playerCache[p]
     local now = tick()
     
     if cache then
-        -- Solo actualizar si ha pasado suficiente tiempo o cambió el estado
+  
         local timeSinceUpdate = now - cache.lastUpdate
         local currentIsLobby = isInLobby(p)
         local currentIsSpec = isSpectator(p)
@@ -308,14 +303,12 @@ local function applyOptimizedPlayerESP(p)
     local isLobby = isInLobby(p)
     local isSpec = isSpectator(p)
     
-    -- Aplicar highlight si está activo
     if playerESPEnabled then
         ensureHighlight(character, color)
     else
         clearHighlight(character)
     end
     
-    -- Aplicar nametags si está activo
     if nametagsEnabled then
         local head = character:FindFirstChild("Head")
         if head and validPart(head) then
@@ -342,7 +335,6 @@ local function applyOptimizedPlayerESP(p)
         end
     end
     
-    -- Actualizar cache
     playerCache[p] = {
         lastUpdate = now,
         character = character,
@@ -359,12 +351,10 @@ local function updateAllPlayersESP()
     if now - lastPlayerESPUpdate < PLAYER_ESP_INTERVAL then return end
     lastPlayerESPUpdate = now
     
-    -- Limpiar cache antiguo cada 10 segundos
     if now % 10 < 0.1 then
         cleanStaleCache()
     end
     
-    -- Actualizar jugadores existentes
     for player, cacheData in pairs(playerCache) do
         if player and player.Parent then
             applyOptimizedPlayerESP(player)
@@ -374,7 +364,6 @@ local function updateAllPlayersESP()
         end
     end
     
-    -- Agregar nuevos jugadores
     for _, player in ipairs(Players:GetPlayers()) do
         if player ~= LP and not playerCache[player] and player.Character then
             applyOptimizedPlayerESP(player)
@@ -388,13 +377,11 @@ local function startOptimizedESPLoop()
         espLoopConn = nil
     end
     
-    -- Limpiar cache inicial
     for player, _ in pairs(playerCache) do
         cleanPlayerESP(player)
     end
     playerCache = {}
     
-    -- Inicializar todos los jugadores
     for _, player in ipairs(Players:GetPlayers()) do
         if player ~= LP and player.Character then
             applyOptimizedPlayerESP(player)
@@ -422,7 +409,6 @@ local function stopOptimizedESPLoop()
     lastPlayerESPUpdate = 0
 end
 
--- Optimización: Conexiones eficientes para jugadores
 local function setupPlayerWatchers()
     for _, p in ipairs(Players:GetPlayers()) do
         if p ~= LP and not connections[p] then
@@ -520,7 +506,7 @@ VisualTab:CreateColorPicker({
     Flag = "SurvivorCol",
     Callback = function(c) 
         survivorColor = c
-        playerColors = {} -- Limpiar cache de colores
+        playerColors = {}
         for player, data in pairs(playerCache) do
             if getRole(player) == "Survivor" then
                 applyOptimizedPlayerESP(player)
@@ -535,7 +521,7 @@ VisualTab:CreateColorPicker({
     Flag = "KillerCol",
     Callback = function(c) 
         killerColor = c 
-        playerColors = {} -- Limpiar cache de colores
+        playerColors = {}
         for player, data in pairs(playerCache) do
             if getRole(player) == "Killer" then
                 applyOptimizedPlayerESP(player)
@@ -550,7 +536,7 @@ VisualTab:CreateColorPicker({
     Flag = "LobbyCol",
     Callback = function(c) 
         lobbyColor = c 
-        playerColors = {} -- Limpiar cache de colores
+        playerColors = {}
         for player, data in pairs(playerCache) do
             if isInLobby(player) then
                 applyOptimizedPlayerESP(player)
@@ -560,7 +546,7 @@ VisualTab:CreateColorPicker({
 })
 
 -- ============================================
--- 11. SISTEMA GENERATOR ESP OPTIMIZADO
+-- 11. SISTEMA GENERATOR ESP
 -- ============================================
 
 local generatorESPEnabled = false
@@ -618,7 +604,6 @@ local function clearGeneratorHighlight(model)
 end
 
 local function getGeneratorProgress(model)
-    -- Intentar múltiples atributos comunes
     local progress = model:GetAttribute("RepairProgress") or 
                      model:GetAttribute("Progress") or 
                      model:GetAttribute("CurrentProgress") or 0
@@ -633,11 +618,9 @@ local function updateGeneratorESP()
     if now - lastGeneratorUpdate < GENERATOR_ESP_INTERVAL then return end
     lastGeneratorUpdate = now
     
-    -- Cache de generadores para búsquedas más rápidas
     if now - generatorCache.lastUpdate > generatorCache.updateInterval then
         generatorCache.items = {}
         
-        -- Búsqueda optimizada en ubicaciones específicas
         local searchFolders = {
             Workspace:FindFirstChild("Map"),
             Workspace:FindFirstChild("Map1"),
@@ -667,7 +650,6 @@ local function updateGeneratorESP()
         generatorCache.lastUpdate = now
     end
     
-    -- Limpiar generadores eliminados
     for model, data in pairs(generatorObjects) do
         if not alive(model) then
             clearGeneratorHighlight(model)
@@ -678,7 +660,6 @@ local function updateGeneratorESP()
         end
     end
     
-    -- Actualizar generadores encontrados
     for _, genData in ipairs(generatorCache.items) do
         local model = genData.model
         local basePart = genData.part
@@ -694,8 +675,7 @@ local function updateGeneratorESP()
             if shouldUpdate then
                 local progress = getGeneratorProgress(model)
                 local color
-                
-                -- Determinar color basado en progreso
+              
                 if progress >= 100 then 
                     color = Color3.fromRGB(0, 255, 0)
                 elseif progress >= 70 then 
@@ -706,10 +686,8 @@ local function updateGeneratorESP()
                     color = Color3.fromRGB(255, 50, 50)
                 end
                 
-                -- Aplicar highlight
                 ensureGeneratorHighlight(model, color)
                 
-                -- Actualizar o crear tag
                 local existingTag = basePart:FindFirstChild("Generator_Tag")
                 if not existingTag then
                     local bb = Instance.new("BillboardGui")
@@ -780,7 +758,6 @@ local function stopGeneratorESPLoop()
     generatorObjects = {}
     lastGeneratorUpdate = 0
     
-    -- Limpiar solo los objetos de generador
     for i = #espObjects, 1, -1 do
         local obj = espObjects[i]
         if obj and (obj.Name == "Generator_Tag" or obj.Name == "Generator_Highlight") then
@@ -817,7 +794,7 @@ VisualTab:CreateColorPicker({
 })
 
 -- ============================================
--- 12. SISTEMA SPEED BOOST COMPLETO
+-- 12. SISTEMA SPEED BOOST
 -- ============================================
 
 local speedBoostEnabled = false
@@ -990,7 +967,7 @@ SurvivorTab:CreateSlider({
 })
 
 -- ============================================
--- 13. GENERATOR BOOST COMPLETO
+-- 13. GENERATOR BOOST
 -- ============================================
 
 local boostEnabled = false
@@ -1012,7 +989,6 @@ local function updateGeneratorBoostCache()
     
     generatorBoostCache.items = {}
     
-    -- Búsqueda optimizada de generadores
     for _, obj in ipairs(workspace:GetDescendants()) do
         if obj:IsA("Model") and obj.Name:lower():find("generator") then
             local part = obj.PrimaryPart or obj:FindFirstChildWhichIsA("BasePart")
@@ -1156,7 +1132,7 @@ SurvivorTab:CreateSlider({
 })
 
 -- ============================================
--- 15. SISTEMA NO SKILLCHECK COMPLETO
+-- 15. SISTEMA NO SKILLCHECK
 -- ============================================
 
 local noSkillEnabled = false
@@ -1290,81 +1266,325 @@ SurvivorTab:CreateToggle({
 })
 
 -- ============================================
--- 16. SISTEMA INSTA HEAL COMPLETO
+-- SISTEMA INSTA HEAL
 -- ============================================
 
 local instaHealEnabled = false
+local autoReviveEnabled = false
+local healAllEnabled = false
+local healRadius = 50
 local healConnection = nil
 local originalHealRemotes = {}
-local originalHealEvents = {}
+local healRemoteCache = {}
+local toolIntercepts = {}
+local lastHealTime = 0
+local HEAL_COOLDOWN = 0.3
 
-local function setupInstaHeal()
-    if healConnection then
-        healConnection:Disconnect()
+local healKeywords = {
+    "heal", "health", "revive", "cure", "medkit", "medical", "firstaid",
+    "bandage", "restore", "recover", "treat", "life", "hp", "revival"
+}
+
+local damageKeywords = {
+    "damage", "hurt", "hit", "attack", "injure", "wound", "bleed", "death", "kill"
+}
+
+
+local healHash = {}
+local damageHash = {}
+for _, word in ipairs(healKeywords) do healHash[word] = true end
+for _, word in ipairs(damageKeywords) do damageHash[word] = true end
+
+local function isHealRelated(name)
+    if not name then return false end
+    local nameLower = name:lower()
+    for word in pairs(healHash) do
+        if nameLower:find(word) then return true end
     end
-    
-    healConnection = RunService.Heartbeat:Connect(function()
-        if not instaHealEnabled then return end
-        
-        local char = LP.Character
-        if not char then return end
-        
-        char:SetAttribute("HealProgress", 100)
-        char:SetAttribute("IsHealing", true)
-    end)
+    return false
 end
 
-local function interceptHealRemotes()
+local function isDamageRelated(name)
+    if not name then return false end
+    local nameLower = name:lower()
+    for word in pairs(damageHash) do
+        if nameLower:find(word) then return true end
+    end
+    return false
+end
+
+local function findCriticalRemotes()
+    local criticalRemotes = {}
+    
+    local searchLocations = {
+        ReplicatedStorage,
+        workspace,
+        game:GetService("ReplicatedFirst"),
+        LP:WaitForChild("PlayerGui"),
+        LP:WaitForChild("Backpack"),
+        game:GetService("StarterPack"),
+        game:GetService("StarterGui")
+    }
+    
+    for _, location in ipairs(searchLocations) do
+        if location and location:IsDescendantOf(game) then
+            for _, obj in ipairs(location:GetDescendants()) do
+                if obj:IsA("RemoteEvent") or obj:IsA("RemoteFunction") then
+                    if isHealRelated(obj.Name) or isDamageRelated(obj.Name) then
+                        criticalRemotes[obj] = true
+                    end
+                end
+            end
+        end
+    end
+    
+    return criticalRemotes
+end
+
+local function interceptAllCriticalRemotes()
     for remote, original in pairs(originalHealRemotes) do
-        if remote and typeof(remote) == "Instance" and remote.Parent then
-            remote.FireServer = original
+        if remote and remote.Parent and original then
+            if remote:IsA("RemoteEvent") then
+                remote.FireServer = original
+            elseif remote:IsA("RemoteFunction") then
+                remote.InvokeServer = original
+            end
         end
     end
     table.clear(originalHealRemotes)
     
-    for _, remote in ipairs(game:GetDescendants()) do
-        if remote:IsA("RemoteEvent") and not originalHealRemotes[remote] then
-            local nameLower = remote.Name:lower()
-            if nameLower:find("heal") or nameLower:find("revive") or nameLower:find("cure") or 
-               nameLower:find("medkit") or nameLower:find("health") then
-                
+    local criticalRemotes = findCriticalRemotes()
+    
+    for remote in pairs(criticalRemotes) do
+        if not originalHealRemotes[remote] then
+            if remote:IsA("RemoteEvent") then
                 originalHealRemotes[remote] = remote.FireServer
                 
                 remote.FireServer = newcclosure(function(self, ...)
                     local args = {...}
+                    local now = tick()
                     
-                    if instaHealEnabled then
-                        if #args >= 2 then
+                    if instaHealEnabled and now - lastHealTime > HEAL_COOLDOWN then
+                        if #args >= 1 then
                             local target = args[1]
                             local action = args[2]
                             local value = args[3]
                             
-                            if action and type(action) == "string" then
-                                local actionLower = action:lower()
+                            if isHealRelated(remote.Name) then
+                                local newArgs = {}
+                                for i, arg in ipairs(args) do
+                                    if i == 3 and type(arg) == "number" and arg < 100 then
+                                        newArgs[i] = 100
+                                    elseif i == 2 and type(arg) == "string" and isHealRelated(arg) then
+                                        newArgs[i] = "FullHeal"
+                                    else
+                                        newArgs[i] = arg
+                                    end
+                                end
                                 
-                                if actionLower:find("heal") or actionLower:find("revive") or 
-                                   actionLower:find("cure") or actionLower:find("progress") then
-                                    
-                                    local newArgs = {}
-                                    for i, arg in ipairs(args) do
-                                        if i == 3 and type(arg) == "number" then
-                                            newArgs[i] = 100
-                                        else
-                                            newArgs[i] = arg
+                                if #newArgs < 3 then
+                                    newArgs[3] = 100
+                                end
+                                
+                                lastHealTime = now
+                                return originalHealRemotes[remote](self, unpack(newArgs))
+                            end
+                            
+                            if isDamageRelated(remote.Name) then
+                                if typeof(target) == "Instance" and target:IsA("Model") then
+                                    local isLocalPlayer = false
+                                    for _, player in ipairs(Players:GetPlayers()) do
+                                        if player.Character == target then
+                                            isLocalPlayer = true
+                                            break
                                         end
                                     end
                                     
-                                    if #newArgs == 2 and (actionLower:find("heal") or actionLower:find("progress")) then
-                                        newArgs[3] = 100
+                                    if isLocalPlayer then
+                                        task.spawn(function()
+                                            task.wait(0.1)
+                                            if instaHealEnabled then
+                                                for healRemote in pairs(criticalRemotes) do
+                                                    if isHealRelated(healRemote.Name) then
+                                                        pcall(function()
+                                                            healRemote:FireServer(target, "Heal", 100)
+                                                        end)
+                                                    end
+                                                end
+                                            end
+                                        end)
+                                        return nil
                                     end
-                                    
-                                    return originalHealRemotes[remote](self, unpack(newArgs))
                                 end
                             end
                         end
                     end
                     
                     return originalHealRemotes[remote](self, ...)
+                end)
+                
+            elseif remote:IsA("RemoteFunction") then
+                originalHealRemotes[remote] = remote.InvokeServer
+                
+                remote.InvokeServer = newcclosure(function(self, ...)
+                    if instaHealEnabled then
+                        local args = {...}
+                        if #args >= 2 then
+                            local target = args[1]
+                            local action = args[2]
+                            
+                            if typeof(target) == "Instance" and target:IsA("Model") and 
+                               action and type(action) == "string" and isHealRelated(action) then
+                                return true, 100, "InstantHeal"
+                            end
+                        end
+                    end
+                    
+                    return originalHealRemotes[remote](self, ...)
+                end)
+            end
+        end
+    end
+end
+
+local function forceCompleteHeal(targetChar)
+    if not targetChar or not targetChar:IsA("Model") then return false end
+    
+    local now = tick()
+    if now - lastHealTime < HEAL_COOLDOWN then return false end
+    
+    local success = false
+    
+    for remote, original in pairs(originalHealRemotes) do
+        if remote and remote.Parent and isHealRelated(remote.Name) then
+            pcall(function()
+                if remote:IsA("RemoteEvent") then
+                    remote:FireServer(targetChar, "Heal", 100)
+                    remote:FireServer(targetChar, "CompleteHeal", true)
+                    remote:FireServer(targetChar, "FullHeal", 100)
+                    remote:FireServer(targetChar, "Revive", true)
+                    success = true
+                end
+            end)
+        end
+    end
+    
+    if not success then
+        local commonEvents = {
+            "HealthEvent", "HealEvent", "ReviveEvent", "MedicalEvent",
+            "FirstAid", "MedkitUse", "HealRemote", "ReviveRemote",
+            "PlayerHeal", "SurvivorHeal", "HealthSystem"
+        }
+        
+        for _, eventName in ipairs(commonEvents) do
+            local remote = ReplicatedStorage:FindFirstChild(eventName)
+            if remote and remote:IsA("RemoteEvent") then
+                pcall(function()
+                    remote:FireServer(targetChar, 100)
+                    remote:FireServer(targetChar, "heal", 100)
+                    remote:FireServer(targetChar, "revive", true)
+                    success = true
+                end)
+            end
+        end
+    end
+    
+    if targetChar:IsDescendantOf(workspace) then
+        pcall(function()
+            local humanoid = targetChar:FindFirstChildOfClass("Humanoid")
+            if humanoid then
+                humanoid.Health = humanoid.MaxHealth
+                
+                if humanoid:GetState() == Enum.HumanoidStateType.Dead then
+                    humanoid:ChangeState(Enum.HumanoidStateType.Running)
+                end
+                
+                for _, child in ipairs(targetChar:GetChildren()) do
+                    if child:IsA("BoolValue") then
+                        local name = child.Name:lower()
+                        if name:find("injured") or name:find("downed") or name:find("dying") then
+                            child:Destroy()
+                        end
+                    end
+                end
+                
+                success = true
+            end
+        end)
+    end
+    
+    pcall(function()
+        targetChar:SetAttribute("Health", 100)
+        targetChar:SetAttribute("HealProgress", 100)
+        targetChar:SetAttribute("Injured", false)
+        targetChar:SetAttribute("Downed", false)
+        targetChar:SetAttribute("Dying", false)
+        targetChar:SetAttribute("Dead", false)
+        success = true
+    end)
+    
+    lastHealTime = now
+    return success
+end
+
+local function interceptHealingToolsAndScripts()
+    for tool, data in pairs(toolIntercepts) do
+        if data and data.original then
+            pcall(function()
+                local env = getfenv(data.script)
+                env[data.funcName] = data.original
+            end)
+        end
+    end
+    table.clear(toolIntercepts)
+    
+    local function setupToolInterception(tool)
+        if not tool or not tool:IsA("Tool") then return end
+        
+        local toolName = tool.Name:lower()
+        local isHealingTool = false
+        
+        for keyword in pairs(healHash) do
+            if toolName:find(keyword) then
+                isHealingTool = true
+                break
+            end
+        end
+        
+        if not isHealingTool then return end
+        
+        for _, script in ipairs(tool:GetDescendants()) do
+            if script:IsA("LocalScript") or script:IsA("Script") then
+                pcall(function()
+                    local env = getfenv(script)
+                    
+                    local funcNames = {"use", "Use", "activate", "Activate", "heal", "Heal"}
+                    
+                    for _, funcName in ipairs(funcNames) do
+                        if env[funcName] and type(env[funcName]) == "function" then
+                            local originalFunc = env[funcName]
+                            
+                            env[funcName] = function(...)
+                                local args = {...}
+                                
+                                if instaHealEnabled then
+                                    local target = args[1] or LP.Character
+                                    if target and target:IsA("Model") then
+                                        forceCompleteHeal(target)
+                                        return true, "InstantHeal"
+                                    end
+                                end
+                                
+                                return originalFunc(...)
+                            end
+                            
+                            toolIntercepts[tool] = {
+                                script = script,
+                                funcName = funcName,
+                                original = originalFunc
+                            }
+                        end
+                    end
                 end)
             end
         end
@@ -1372,111 +1592,128 @@ local function interceptHealRemotes()
     
     local char = LP.Character
     if char then
-        for _, remote in ipairs(char:GetDescendants()) do
-            if remote:IsA("RemoteEvent") and not originalHealRemotes[remote] then
-                originalHealRemotes[remote] = remote.FireServer
-                
-                remote.FireServer = newcclosure(function(self, ...)
-                    if instaHealEnabled then
-                        local args = {...}
-                        if #args >= 1 then
-                            local action = args[1]
-                            if action and type(action) == "string" then
-                                local actionLower = action:lower()
-                                if actionLower:find("heal") or actionLower:find("complete") then
-                                    local newArgs = {}
-                                    newArgs[1] = action
-                                    newArgs[2] = 100
-                                    return originalHealRemotes[remote](self, unpack(newArgs))
-                                end
+        for _, tool in ipairs(char:GetChildren()) do
+            setupToolInterception(tool)
+        end
+    end
+    
+    local backpack = LP:FindFirstChild("Backpack")
+    if backpack then
+        for _, tool in ipairs(backpack:GetChildren()) do
+            setupToolInterception(tool)
+        end
+    end
+    
+    if char then
+        char.ChildAdded:Connect(function(child)
+            if child:IsA("Tool") then
+                task.wait(0.5)
+                setupToolInterception(child)
+            end
+        end)
+    end
+    
+    if backpack then
+        backpack.ChildAdded:Connect(function(child)
+            if child:IsA("Tool") then
+                task.wait(0.5)
+                setupToolInterception(child)
+            end
+        end)
+    end
+end
+
+local function intelligentAutoHeal()
+    if not instaHealEnabled then return end
+    
+    local myChar = LP.Character
+    if not myChar then return end
+    
+    local now = tick()
+    
+    if autoReviveEnabled then
+        if not healRemoteCache.lastReviveCheck or (now - healRemoteCache.lastReviveCheck) > 0.5 then
+            local humanoid = myChar:FindFirstChildOfClass("Humanoid")
+            if humanoid and humanoid.Health <= 0 then
+                forceCompleteHeal(myChar)
+            end
+            healRemoteCache.lastReviveCheck = now
+        end
+    end
+    
+    if not healRemoteCache.lastSelfHeal or (now - healRemoteCache.lastSelfHeal) > 1 then
+        local humanoid = myChar:FindFirstChildOfClass("Humanoid")
+        if humanoid and humanoid.Health < humanoid.MaxHealth then
+            forceCompleteHeal(myChar)
+        end
+        
+        if myChar:GetAttribute("Injured") or 
+           myChar:GetAttribute("Downed") or 
+           myChar:GetAttribute("Dying") then
+            forceCompleteHeal(myChar)
+        end
+        
+        healRemoteCache.lastSelfHeal = now
+    end
+    
+    if healAllEnabled then
+        if not healRemoteCache.lastTeamHeal or (now - healRemoteCache.lastTeamHeal) > 2 then
+            local myRoot = myChar:FindFirstChild("HumanoidRootPart")
+            if myRoot then
+                for _, player in ipairs(Players:GetPlayers()) do
+                    if player.Character then
+                        local targetChar = player.Character
+                        local targetRoot = targetChar:FindFirstChild("HumanoidRootPart")
+                        
+                        if targetRoot and (myRoot.Position - targetRoot.Position).Magnitude < healRadius then
+                            local humanoid = targetChar:FindFirstChildOfClass("Humanoid")
+                            if humanoid and humanoid.Health < humanoid.MaxHealth then
+                                forceCompleteHeal(targetChar)
                             end
                         end
                     end
-                    return originalHealRemotes[remote](self, ...)
-                end)
-            end
-        end
-    end
-end
-
-local function interceptToolHealing()
-    local char = LP.Character
-    if not char then return end
-    
-    for _, tool in ipairs(char:GetChildren()) do
-        if tool:IsA("Tool") then
-            local toolName = tool.Name:lower()
-            if toolName:find("med") or toolName:find("heal") or toolName:find("kit") then
-                for _, script in ipairs(tool:GetDescendants()) do
-                    if script:IsA("LocalScript") then
-                        pcall(function()
-                            local env = getfenv(script)
-                            
-                            if env.use then
-                                originalHealEvents["tool_use"] = env.use
-                                env.use = function(...)
-                                    if instaHealEnabled then
-                                        local args = {...}
-                                        if #args >= 1 then
-                                            local target = args[1]
-                                            if target and target:IsA("Model") then
-                                                for remote, original in pairs(originalHealRemotes) do
-                                                    pcall(function()
-                                                        remote:FireServer(target, "Heal", 100)
-                                                        remote:FireServer(target, "CompleteHeal", true)
-                                                    end)
-                                                end
-                                            end
-                                        end
-                                    end
-                                    return originalHealEvents["tool_use"](...)
-                                end
-                            end
-                        end)
-                    end
                 end
             end
+            healRemoteCache.lastTeamHeal = now
         end
     end
 end
 
-local function autoHealNearby()
-    if not instaHealEnabled then return end
-    
-    local char = LP.Character
-    if not char then return end
-    
-    local root = char:FindFirstChild("HumanoidRootPart")
-    if not root then return end
-    
-    for _, player in ipairs(Players:GetPlayers()) do
-        if player ~= LP and player.Character then
-            local targetChar = player.Character
-            local targetRoot = targetChar:FindFirstChild("HumanoidRootPart")
-            
-            if targetRoot and (root.Position - targetRoot.Position).Magnitude < 10 then
-                local humanoid = targetChar:FindFirstChildOfClass("Humanoid")
-                local isInjured = targetChar:GetAttribute("Injured") or 
-                                 targetChar:GetAttribute("Downed") or
-                                 targetChar:GetAttribute("Dying") or false
-                
-                if (humanoid and humanoid.Health < humanoid.MaxHealth) or isInjured then
-                    for remote, original in pairs(originalHealRemotes) do
-                        pcall(function()
-                            remote:FireServer(targetChar, "Heal", 100)
-                            remote:FireServer(targetChar, "Revive", true)
-                            remote:FireServer(targetChar, "CompleteHeal", true)
-                            remote:FireServer(char, "Heal", 100)
-                        end)
-                    end
-                end
-            end
-        end
+local function setupUltimateInstaHeal()
+    if healConnection then
+        healConnection:Disconnect()
+        healConnection = nil
     end
+    
+    interceptAllCriticalRemotes()
+    interceptHealingToolsAndScripts()
+    
+    healConnection = RunService.Heartbeat:Connect(function()
+        if not instaHealEnabled then return end
+        
+        local char = LP.Character
+        if char then
+            pcall(function()
+                char:SetAttribute("HealProgress", 100)
+                char:SetAttribute("IsHealing", true)
+            end)
+        end
+        
+        intelligentAutoHeal()
+    end)
+    
+    task.spawn(function()
+        task.wait(0.5)
+        local char = LP.Character
+        if char then
+            forceCompleteHeal(char)
+        end
+    end)
 end
 
-SurvivorTab:CreateSection("Heal")
+SurvivorTab:CreateSection("Insta Heal")
 
+-- Toggle principal
 SurvivorTab:CreateToggle({
     Name = "Insta Heal",
     CurrentValue = false,
@@ -1484,30 +1721,22 @@ SurvivorTab:CreateToggle({
         instaHealEnabled = v
         
         if v then
-            setupInstaHeal()
-            interceptHealRemotes()
-            interceptToolHealing()
+            setupUltimateInstaHeal()
             
             task.spawn(function()
-                while instaHealEnabled do
-                    autoHealNearby()
-                    task.wait(0.5)
+                task.wait(1)
+                local char = LP.Character
+                if char then
+                    forceCompleteHeal(char)
                 end
             end)
             
             LP.CharacterAdded:Connect(function(char)
-                task.wait(1)
+                task.wait(1.5)
                 if instaHealEnabled then
-                    setupInstaHeal()
-                    interceptHealRemotes()
-                    interceptToolHealing()
-                    
+                    setupUltimateInstaHeal()
                     task.wait(0.5)
-                    for remote, original in pairs(originalHealRemotes) do
-                        pcall(function()
-                            remote:FireServer(char, "Heal", 100)
-                        end)
-                    end
+                    forceCompleteHeal(char)
                 end
             end)
             
@@ -1518,55 +1747,59 @@ SurvivorTab:CreateToggle({
             end
             
             for remote, original in pairs(originalHealRemotes) do
-                if remote and typeof(remote) == "Instance" and remote.Parent then
-                    remote.FireServer = original
+                if remote and remote.Parent and original then
+                    if remote:IsA("RemoteEvent") then
+                        remote.FireServer = original
+                    elseif remote:IsA("RemoteFunction") then
+                        remote.InvokeServer = original
+                    end
                 end
             end
             table.clear(originalHealRemotes)
             
-            for name, original in pairs(originalHealEvents) do
-                if name == "tool_use" then
-                    local char = LP.Character
-                    if char then
-                        for _, tool in ipairs(char:GetChildren()) do
-                            if tool:IsA("Tool") then
-                                for _, script in ipairs(tool:GetDescendants()) do
-                                    if script:IsA("LocalScript") then
-                                        pcall(function()
-                                            local env = getfenv(script)
-                                            env.use = original
-                                        end)
-                                    end
-                                end
-                            end
-                        end
-                    end
+            for tool, data in pairs(toolIntercepts) do
+                if data and data.original then
+                    pcall(function()
+                        local env = getfenv(data.script)
+                        env[data.funcName] = data.original
+                    end)
                 end
             end
-            table.clear(originalHealEvents)
+            table.clear(toolIntercepts)
+            table.clear(healRemoteCache)
         end
     end
 })
 
 SurvivorTab:CreateToggle({
-    Name = "Auto Insta-Heal",
+    Name = " Auto Revivir y curacion",
     CurrentValue = false,
     Callback = function(v)
-        if v then
-            task.spawn(function()
-                while v do
-                    if instaHealEnabled then
-                        autoHealNearby()
-                    end
-                    task.wait(1)
-                end
-            end)
-        end
+        autoReviveEnabled = v
+    end
+})
+
+SurvivorTab:CreateToggle({
+    Name = " Curar a Todos en Radio",
+    CurrentValue = false,
+    Callback = function(v)
+        healAllEnabled = v
+    end
+})
+
+SurvivorTab:CreateSlider({
+    Name = "Radio de Curación",
+    Range = {5, 100},
+    Increment = 5,
+    Suffix = " studs",
+    CurrentValue = healRadius,
+    Callback = function(v)
+        healRadius = v
     end
 })
 
 -- ============================================
--- 17. SISTEMA ANTI-RALENTIZACIÓN COMPLETO
+-- 17. SISTEMA ANTI-RALENTIZACIÓN
 -- ============================================
 
 local antiRalentizacionEnabled = false
@@ -1805,7 +2038,7 @@ SurvivorTab:CreateToggle({
 })
 
 -- ============================================
--- SISTEMA ANTI-EFECTOS COMPLETO (KILLER TAB)
+-- SISTEMA ANTI-EFECTOS (KILLER TAB)
 -- ============================================
 
 KillerTab:CreateSection("Anti-Efectos")
@@ -2239,7 +2472,7 @@ KillerTab:CreateToggle({
 })
 
 -- ============================================
--- SISTEMA HITBOX EXPANDER COMPLETO
+-- SISTEMA HITBOX EXPANDER
 -- ============================================
 
 KillerTab:CreateSection("Hitbox Expander (Survivors)")
@@ -2514,7 +2747,7 @@ KillerTab:CreateColorPicker({
 })
 
 -- ============================================
--- 21. SISTEMA FULL BREAK GENERATOR COMPLETO
+-- 21. SISTEMA FULL BREAK GENERATOR
 -- ============================================
 KillerTab:CreateSection("Generator")
 

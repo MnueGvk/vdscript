@@ -1469,7 +1469,7 @@ end
 SurvivorTab:CreateSection("Insta Heal")
 
 SurvivorTab:CreateToggle({
-    Name = "Insta Heal FORZADO",
+    Name = "Insta Heal",
     CurrentValue = false,
     Callback = function(v)
         instaHealEnabled = v

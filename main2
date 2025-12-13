@@ -1266,7 +1266,7 @@ SurvivorTab:CreateToggle({
 })
 
 -- ============================================
--- SISTEMA INSTA HEAL PARA VIOLENCE DISTRICT
+-- SISTEMA INSTA HEAL
 -- ============================================
 
 local instaHealEnabled = false
@@ -1274,184 +1274,136 @@ local autoReviveEnabled = false
 local healAllEnabled = false
 local healRadius = 50
 local healConnection = nil
-
--- Variables específicas para Violence District
 local lastHealTime = 0
-local HEAL_INTERVAL = 0.5
-local foundGameRemotes = false
-local violenceDistrictRemotes = {}
+local HEAL_COOLDOWN = 0.5
 
--- Función para detectar el sistema de curación de Violence District
-local function detectViolenceDistrictSystem()
-    violenceDistrictRemotes = {}
+local violenceDistrictRemotes = {
+    HealEvent = nil,
+    HealAnim = nil,
+    HealAnimRec = nil,
+    Stophealing = nil,
+    Healthy = nil
+}
+
+local function findViolenceDistrictRemotes()
+    local healingFolder = ReplicatedStorage:FindFirstChild("Remotes")
+    if healingFolder then
+        healingFolder = healingFolder:FindFirstChild("Healing")
+    end
     
-    -- Buscar RemoteEvents específicos de Violence District
-    for _, obj in ipairs(ReplicatedStorage:GetDescendants()) do
-        if obj:IsA("RemoteEvent") then
-            local name = obj.Name:lower()
-            
-            -- Posibles nombres en Violence District
-            if name:find("heal") or name:find("health") or name:find("revive") or 
-               name:find("medkit") or name:find("medical") or name:find("cure") or
-               name:find("firstaid") or name:find("bandage") then
-                table.insert(violenceDistrictRemotes, obj)
-            end
-            
-            -- También buscar eventos genéricos
-            if name:find("player") and (name:find("health") or name:find("heal")) then
-                table.insert(violenceDistrictRemotes, obj)
-            end
+    local itemsFolder = ReplicatedStorage:FindFirstChild("Remotes")
+    if itemsFolder then
+        itemsFolder = itemsFolder:FindFirstChild("Items")
+        if itemsFolder then
+            itemsFolder = itemsFolder:FindFirstChild("AdrenalineShot")
         end
     end
     
-    -- Buscar en Workspace (a veces están ahí)
-    for _, obj in ipairs(workspace:GetDescendants()) do
-        if obj:IsA("RemoteEvent") then
-            local name = obj.Name:lower()
-            if name:find("heal") or name:find("health") then
-                table.insert(violenceDistrictRemotes, obj)
-            end
+    if healingFolder then
+        violenceDistrictRemotes.HealEvent = healingFolder:FindFirstChild("HealEvent")
+        violenceDistrictRemotes.HealAnim = healingFolder:FindFirstChild("HealAnim")
+        violenceDistrictRemotes.HealAnimRec = healingFolder:FindFirstChild("HealAnimRec")
+        violenceDistrictRemotes.Stophealing = healingFolder:FindFirstChild("Stophealing")
+    end
+    
+    if itemsFolder then
+        violenceDistrictRemotes.Healthy = itemsFolder:FindFirstChild("Healthy")
+    end
+    
+    local foundAll = true
+    for name, remote in pairs(violenceDistrictRemotes) do
+        if not remote then
+            print("No se encontró:", name)
+            foundAll = false
+        else
+            print("Encontrado:", name, "->", remote:GetFullName())
         end
     end
     
-    -- Buscar módulos de salud
-    for _, obj in ipairs(ReplicatedStorage:GetDescendants()) do
-        if obj:IsA("ModuleScript") then
-            local name = obj.Name:lower()
-            if name:find("health") or name:find("medical") or name:find("heal") then
-                pcall(function()
-                    local module = require(obj)
-                    if module.heal or module.Heal or module.setHealth then
-                        table.insert(violenceDistrictRemotes, {module = module, name = obj.Name})
-                    end
-                end)
-            end
-        end
-    end
-    
-    foundGameRemotes = #violenceDistrictRemotes > 0
-    return foundGameRemotes
+    return foundAll
 end
 
--- Función para intentar curación con diferentes métodos
-local function attemptViolenceDistrictHeal(targetChar)
+local function violenceDistrictRealHeal(targetChar)
     if not targetChar or not targetChar:IsA("Model") then return false end
     
     local now = tick()
-    if now - lastHealTime < HEAL_INTERVAL then return false end
+    if now - lastHealTime < HEAL_COOLDOWN then return false end
     
     local success = false
     
-    -- Método 1: Usar RemoteEvents encontrados
-    for _, remote in ipairs(violenceDistrictRemotes) do
-        if typeof(remote) == "Instance" and remote:IsA("RemoteEvent") then
-            pcall(function()
-                -- Intentar diferentes formatos de argumentos
-                remote:FireServer(targetChar, "Heal", 100)
-                remote:FireServer(targetChar, 100)
-                remote:FireServer("Heal", targetChar, 100)
-                remote:FireServer("FullHeal", targetChar)
-                success = true
-            end)
-        elseif remote.module then
-            -- Método 2: Usar módulos
-            pcall(function()
-                if remote.module.heal then
-                    remote.module.heal(targetChar, 100)
-                    success = true
-                elseif remote.module.Heal then
-                    remote.module.Heal(targetChar, 100)
-                    success = true
-                elseif remote.module.setHealth then
-                    remote.module.setHealth(targetChar, 100)
-                    success = true
-                end
-            end)
-        end
-    end
-    
-    -- Método 3: Modificar Humanoid directamente (backup)
-    if not success then
+    if violenceDistrictRemotes.HealEvent then
         pcall(function()
-            local humanoid = targetChar:FindFirstChildOfClass("Humanoid")
-            if humanoid then
-                humanoid.Health = humanoid.MaxHealth
-                
-                -- Si está muerto, intentar revivir
-                if humanoid:GetState() == Enum.HumanoidStateType.Dead then
-                    humanoid:ChangeState(Enum.HumanoidStateType.Running)
-                end
-                success = true
-            end
+            violenceDistrictRemotes.HealEvent:FireServer(targetChar, 100)
+            violenceDistrictRemotes.HealEvent:FireServer(targetChar, "FullHeal")
+            success = true
+            print("Usando HealEvent para curar a", targetChar.Name)
         end)
     end
     
-    -- Método 4: Modificar atributos comunes en Violence District
+    if violenceDistrictRemotes.HealAnim then
+        pcall(function()
+            violenceDistrictRemotes.HealAnim:FireServer(targetChar, true)
+            violenceDistrictRemotes.HealAnim:FireServer(targetChar, "Start")
+            success = true
+        end)
+    end
+    
+    if violenceDistrictRemotes.HealAnimRec then
+        pcall(function()
+            violenceDistrictRemotes.HealAnimRec:FireServer(targetChar, true)
+            success = true
+        end)
+    end
+    
+    if violenceDistrictRemotes.Healthy then
+        pcall(function()
+            violenceDistrictRemotes.Healthy:FireServer(targetChar)
+            violenceDistrictRemotes.Healthy:FireServer(targetChar, true)
+            success = true
+            print("Usando AdrenalineShot en", targetChar.Name)
+        end)
+    end
+    
     pcall(function()
+        targetChar:SetAttribute("IsHealing", true)
         targetChar:SetAttribute("Health", 100)
         targetChar:SetAttribute("CurrentHealth", 100)
         targetChar:SetAttribute("HealProgress", 100)
-        targetChar:SetAttribute("IsHealing", true)
         
-        -- Atributos específicos de herido/muerto
-        targetChar:SetAttribute("Injured", false)
-        targetChar:SetAttribute("Downed", false) 
-        targetChar:SetAttribute("Dying", false)
-        targetChar:SetAttribute("Dead", false)
-        targetChar:SetAttribute("KnockedOut", false)
+        targetChar:SetAttribute("healnerf", 0)
+        
+        local hrp = targetChar:FindFirstChild("HumanoidRootPart")
+        if hrp then
+            hrp:SetAttribute("IsHealing", true)
+            hrp:SetAttribute("HealProgress", 100)
+        end
         
         success = true
+        print("Atributos actualizados para", targetChar.Name)
     end)
-    
-    -- Método 5: Buscar scripts locales de curación en el personaje
     pcall(function()
-        for _, script in ipairs(targetChar:GetDescendants()) do
-            if script:IsA("Script") or script:IsA("LocalScript") then
-                local name = script.Name:lower()
-                if name:find("heal") or name:find("health") then
-                    -- Intentar modificar variables en el script
-                    pcall(function()
-                        local env = getfenv(script)
-                        if env.health then env.health = 100 end
-                        if env.Health then env.Health = 100 end
-                        if env.currentHealth then env.currentHealth = 100 end
-                        if env.CurrentHealth then env.CurrentHealth = 100 end
-                        success = true
-                    end)
-                end
+        local humanoid = targetChar:FindFirstChildOfClass("Humanoid")
+        if humanoid then
+            humanoid.Health = humanoid.MaxHealth
+            
+            -- Si está muerto, revivir
+            if humanoid:GetState() == Enum.HumanoidStateType.Dead then
+                humanoid:ChangeState(Enum.HumanoidStateType.Running)
             end
+            
+            success = true
         end
     end)
     
-    -- Método 6: Simular uso de herramientas de curación
-    pcall(function()
-        -- Buscar medkits en el inventario
-        local player = Players:GetPlayerFromCharacter(targetChar)
-        if player then
-            local backpack = player:FindFirstChild("Backpack")
-            if backpack then
-                for _, tool in ipairs(backpack:GetChildren()) do
-                    if tool:IsA("Tool") and tool.Name:lower():find("med") then
-                        -- Activar tool
-                        tool:SetAttribute("InUse", true)
-                        
-                        -- Buscar y ejecutar script de uso
-                        for _, script in ipairs(tool:GetDescendants()) do
-                            if script:IsA("Script") then
-                                pcall(function()
-                                    local env = getfenv(script)
-                                    if env.use then env.use(targetChar) end
-                                    if env.Use then env.Use(targetChar) end
-                                    if env.activate then env.activate(targetChar) end
-                                end)
-                            end
-                        end
-                        success = true
-                    end
-                end
-            end
-        end
-    end)
+    if violenceDistrictRemotes.Stophealing then
+        pcall(function()
+            task.spawn(function()
+                task.wait(0.1)
+                violenceDistrictRemotes.Stophealing:FireServer(targetChar, false)
+                violenceDistrictRemotes.Stophealing:FireServer(targetChar, "Stop")
+            end)
+        end)
+    end
     
     if success then
         lastHealTime = now
@@ -1460,105 +1412,126 @@ local function attemptViolenceDistrictHeal(targetChar)
     return success
 end
 
--- Función principal de auto-curación
 local function violenceDistrictAutoHeal()
     if not instaHealEnabled then return end
     
     local myChar = LP.Character
     if not myChar then return end
     
-    -- Detectar sistema si no se ha hecho
-    if not foundGameRemotes then
-        detectViolenceDistrictSystem()
+    local now = tick()
+    
+    if autoReviveEnabled then
+        if not healConnection or (now - (healConnection.lastReviveCheck or 0)) > 0.5 then
+            local humanoid = myChar:FindFirstChildOfClass("Humanoid")
+            if humanoid and humanoid.Health <= 0 then
+                violenceDistrictRealHeal(myChar)
+            end
+            if healConnection then
+                healConnection.lastReviveCheck = now
+            end
+        end
     end
     
-    -- Auto-curarse a sí mismo
     local humanoid = myChar:FindFirstChildOfClass("Humanoid")
     if humanoid then
-        -- Auto-revivir si está muerto
-        if autoReviveEnabled and (humanoid.Health <= 0 or humanoid:GetState() == Enum.HumanoidStateType.Dead) then
-            attemptViolenceDistrictHeal(myChar)
-        end
-        
-        -- Auto-curar si está herido
+      
         if humanoid.Health < humanoid.MaxHealth then
-            attemptViolenceDistrictHeal(myChar)
+            violenceDistrictRealHeal(myChar)
         end
         
-        -- Verificar atributos de herido
-        if myChar:GetAttribute("Injured") or myChar:GetAttribute("Downed") or myChar:GetAttribute("Dying") then
-            attemptViolenceDistrictHeal(myChar)
+        local currentHealth = myChar:GetAttribute("CurrentHealth") or myChar:GetAttribute("Health")
+        if currentHealth and currentHealth < 100 then
+            violenceDistrictRealHeal(myChar)
         end
     end
     
-    -- Curar a todos en radio
     if healAllEnabled then
-        local myRoot = myChar:FindFirstChild("HumanoidRootPart")
-        if myRoot then
-            for _, player in ipairs(Players:GetPlayers()) do
-                if player.Character then
-                    local targetChar = player.Character
-                    local targetRoot = targetChar:FindFirstChild("HumanoidRootPart")
-                    
-                    if targetRoot then
-                        local distance = (myRoot.Position - targetRoot.Position).Magnitude
+        if not healConnection or (now - (healConnection.lastTeamHeal or 0)) > 1 then
+            local myRoot = myChar:FindFirstChild("HumanoidRootPart")
+            if myRoot then
+                for _, player in ipairs(Players:GetPlayers()) do
+                    if player.Character then
+                        local targetChar = player.Character
+                        local targetRoot = targetChar:FindFirstChild("HumanoidRootPart")
                         
-                        if distance <= healRadius then
-                            local targetHumanoid = targetChar:FindFirstChildOfClass("Humanoid")
-                            if targetHumanoid and targetHumanoid.Health < targetHumanoid.MaxHealth then
-                                attemptViolenceDistrictHeal(targetChar)
+                        if targetRoot then
+                            local distance = (myRoot.Position - targetRoot.Position).Magnitude
+                            
+                            if distance <= healRadius then
+                              
+                                local targetHumanoid = targetChar:FindFirstChildOfClass("Humanoid")
+                                if targetHumanoid and targetHumanoid.Health < targetHumanoid.MaxHealth then
+                                    violenceDistrictRealHeal(targetChar)
+                                end
+                                
+                                local targetHealth = targetChar:GetAttribute("CurrentHealth") or targetChar:GetAttribute("Health")
+                                if targetHealth and targetHealth < 100 then
+                                    violenceDistrictRealHeal(targetChar)
+                                end
                             end
                         end
                     end
                 end
             end
+            if healConnection then
+                healConnection.lastTeamHeal = now
+            end
         end
     end
 end
 
--- Configurar sistema específico para Violence District
-local function setupViolenceDistrictHeal()
+local function setupViolenceDistrictInstaHeal()
     if healConnection then
-        healConnection:Disconnect()
+        if healConnection.connection then
+            healConnection.connection:Disconnect()
+        end
         healConnection = nil
     end
     
-    -- Detectar sistema del juego
-    detectViolenceDistrictSystem()
+    findViolenceDistrictRemotes()
     
-    -- Iniciar loop de curación
-    healConnection = RunService.Heartbeat:Connect(function()
+    healConnection = {
+        connection = nil,
+        lastReviveCheck = 0,
+        lastTeamHeal = 0
+        }
+        
+        healConnection.connection = RunService.Heartbeat:Connect(function()
         violenceDistrictAutoHeal()
     end)
     
-    -- Curar inmediatamente al activar
     task.spawn(function()
-        task.wait(1)
+        task.wait(0.5)
         local char = LP.Character
         if char then
-            attemptViolenceDistrictHeal(char)
+            violenceDistrictRealHeal(char)
+            print("Curación inicial aplicada")
         end
     end)
 end
 
--- Limpiar sistema
 local function cleanupViolenceDistrictHeal()
-    if healConnection then
-        healConnection:Disconnect()
-        healConnection = nil
+    if healConnection and healConnection.connection then
+        healConnection.connection:Disconnect()
     end
+    healConnection = nil
     
-    violenceDistrictRemotes = {}
-    foundGameRemotes = false
+    task.spawn(function()
+        local char = LP.Character
+        if char then
+            pcall(function()
+                char:SetAttribute("IsHealing", false)
+                if violenceDistrictRemotes.Stophealing then
+                    violenceDistrictRemotes.Stophealing:FireServer(char, false)
+                end
+            end)
+        end
+    end)
 end
 
--- ============================================
--- INTERFAZ PARA VIOLENCE DISTRICT
--- ============================================
 
 SurvivorTab:CreateSection("Insta Heal - Violence District")
 
--- Toggle principal
 SurvivorTab:CreateToggle({
     Name = "Insta Heal",
     CurrentValue = false,
@@ -1566,7 +1539,7 @@ SurvivorTab:CreateToggle({
         instaHealEnabled = v
         
         if v then
-            setupViolenceDistrictHeal()
+            setupViolenceDistrictInstaHeal()
         else
             cleanupViolenceDistrictHeal()
         end
@@ -1582,7 +1555,6 @@ SurvivorTab:CreateToggle({
     end
 })
 
--- Toggle para curar a todos en radio
 SurvivorTab:CreateToggle({
     Name = "Curar a Todos en Radio",
     CurrentValue = false,
@@ -1591,7 +1563,6 @@ SurvivorTab:CreateToggle({
     end
 })
 
--- Slider para radio de curación
 SurvivorTab:CreateSlider({
     Name = "Radio de Curación",
     Range = {5, 100},
@@ -1603,47 +1574,6 @@ SurvivorTab:CreateSlider({
     end
 })
 
--- Botón de debug para probar curación
-SurvivorTab:CreateButton({
-    Name = "Probar Curación",
-    Callback = function()
-        local char = LP.Character
-        if char then
-            print("=== PRUEBA DE CURA VIOLENCE DISTRICT ===")
-            
-            -- Detectar sistema
-            detectViolenceDistrictSystem()
-            print("RemoteEvents encontrados:", #violenceDistrictRemotes)
-            
-            for i, remote in ipairs(violenceDistrictRemotes) do
-                if typeof(remote) == "Instance" then
-                    print(i, "RemoteEvent:", remote.Name, "Path:", remote:GetFullName())
-                else
-                    print(i, "Módulo:", remote.name)
-                end
-            end
-            
-            -- Intentar curar
-            local success = attemptViolenceDistrictHeal(char)
-            print("Curación exitosa:", success)
-            
-            -- Mostrar estado actual
-            local humanoid = char:FindFirstChildOfClass("Humanoid")
-            if humanoid then
-                print("Salud actual:", humanoid.Health, "/", humanoid.MaxHealth)
-            end
-            
-            -- Mostrar atributos
-            local attrs = {"Health", "CurrentHealth", "Injured", "Downed", "Dying"}
-            for _, attr in ipairs(attrs) do
-                local value = char:GetAttribute(attr)
-                if value ~= nil then
-                    print("Atributo", attr .. ":", value)
-                end
-            end
-        end
-    end
-})
 
 -- ============================================
 -- 17. SISTEMA ANTI-RALENTIZACIÓN

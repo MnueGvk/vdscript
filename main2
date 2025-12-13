@@ -1266,11 +1266,10 @@ SurvivorTab:CreateToggle({
 })
 
 -- ============================================
--- INSTA HEAL
+-- INSTA HEAL SIMPLIFICADO
 -- ============================================
 
 local instaHealEnabled = false
-local autoReviveEnabled = false
 local healConnection = nil
 local originalFunctions = {}
 
@@ -1283,66 +1282,57 @@ local healRemotes = {
     Healthy = nil
 }
 
--- Encontrar y preparar los RemoteEvents
+-- Encontrar RemoteEvents
 local function setupViolenceDistrictRemotes()
-    local remotesFolder = ReplicatedStorage:WaitForChild("Remotes", 5)
+    local remotesFolder = ReplicatedStorage:FindFirstChild("Remotes")
     if not remotesFolder then return false end
     
     local healingFolder = remotesFolder:FindFirstChild("Healing")
     local itemsFolder = remotesFolder:FindFirstChild("Items")
     
     if healingFolder then
-        healRemotes.HealEvent = healingFolder:WaitForChild("HealEvent")
-        healRemotes.HealAnim = healingFolder:WaitForChild("HealAnim")
-        healRemotes.HealAnimRec = healingFolder:WaitForChild("HealAnimRec")
-        healRemotes.Stophealing = healingFolder:WaitForChild("Stophealing")
+        healRemotes.HealEvent = healingFolder:FindFirstChild("HealEvent")
+        healRemotes.HealAnim = healingFolder:FindFirstChild("HealAnim")
+        healRemotes.HealAnimRec = healingFolder:FindFirstChild("HealAnimRec")
+        healRemotes.Stophealing = healingFolder:FindFirstChild("Stophealing")
     end
     
     if itemsFolder then
         local adrenalineFolder = itemsFolder:FindFirstChild("AdrenalineShot")
         if adrenalineFolder then
-            healRemotes.Healthy = adrenalineFolder:WaitForChild("Healthy")
+            healRemotes.Healthy = adrenalineFolder:FindFirstChild("Healthy")
         end
     end
     
-    return true
+    return healRemotes.HealEvent ~= nil
 end
 
--- INTERCEPCIÓN DIRECTA DEL REMOTEEVENT (MÉTODO MÁS EFECTIVO)
+-- Interceptar HealEvent
 local function interceptHealEvent()
     if not healRemotes.HealEvent then return false end
     
     -- Guardar función original
     local originalFire = healRemotes.HealEvent.FireServer
     
-    -- Interceptar con función modificada
+    -- Interceptar
     healRemotes.HealEvent.FireServer = function(self, ...)
         local args = {...}
         
         if instaHealEnabled and #args >= 1 then
             local target = args[1]
             
-            -- Verificar si es un personaje
             if typeof(target) == "Instance" and target:IsA("Model") then
-                -- Modificar argumentos para curación completa
+                -- Modificar para curación completa
                 local newArgs = {}
-                
-                -- Mantener el target
                 newArgs[1] = target
-                
-                -- Forzar 100% de salud
-                if #args >= 2 then
-                    newArgs[2] = 100
-                else
-                    newArgs[2] = 100
-                end
+                newArgs[2] = 100  -- 100% de salud
                 
                 -- Copiar resto de argumentos
                 for i = 3, #args do
                     newArgs[i] = args[i]
                 end
                 
-                -- Actualizar atributos inmediatamente
+                -- Actualizar atributos
                 pcall(function()
                     target:SetAttribute("Health", 100)
                     target:SetAttribute("CurrentHealth", 100)
@@ -1358,12 +1348,10 @@ local function interceptHealEvent()
                     end
                 end)
                 
-                -- Usar nuevos argumentos
                 return originalFire(self, unpack(newArgs))
             end
         end
         
-        -- Ejecutar normalmente
         return originalFire(self, ...)
     end
     
@@ -1371,72 +1359,58 @@ local function interceptHealEvent()
     return true
 end
 
--- Interceptar ProximityPrompts de curación
+-- Interceptar ProximityPrompts
 local function interceptHealingPrompts()
     for _, prompt in ipairs(workspace:GetDescendants()) do
         if prompt:IsA("ProximityPrompt") then
             local promptName = prompt.Name:lower()
-            local objectName = prompt.Parent and prompt.Parent.Name:lower() or ""
             
-            if promptName:find("heal") or promptName:find("revive") or 
-               promptName:find("medkit") or objectName:find("heal") then
+            if promptName:find("heal") or promptName:find("revive") or promptName:find("medkit") then
                 
-                -- Guardar conexión original
-                local promptConnections = {}
-                
-                -- Crear nueva conexión que fuerza curación completa
-                local newConnection = prompt.Triggered:Connect(function(player)
-                    if player == LP and instaHealEnabled then
-                        local target = prompt.Parent
-                        if target and target:IsA("Model") then
-                            -- Enviar curación completa directamente
-                            if healRemotes.HealEvent then
-                                healRemotes.HealEvent:FireServer(target, 100)
-                            end
-                            
-                            -- También usar Healthy si existe
-                            if healRemotes.Healthy then
-                                healRemotes.Healthy:FireServer(target)
+                if not originalFunctions[prompt] then
+                    local promptConnections = {}
+                    
+                    local newConnection = prompt.Triggered:Connect(function(player)
+                        if player == LP and instaHealEnabled then
+                            local target = prompt.Parent
+                            if target and target:IsA("Model") then
+                                if healRemotes.HealEvent then
+                                    healRemotes.HealEvent:FireServer(target, 100)
+                                end
                             end
                         end
-                    end
-                end)
-                
-                promptConnections["triggered"] = newConnection
-                originalFunctions[prompt] = promptConnections
+                    end)
+                    
+                    promptConnections["triggered"] = newConnection
+                    originalFunctions[prompt] = promptConnections
+                end
             end
         end
     end
 end
 
--- Función de curación instantánea directa
+-- Función de curación
 local function instantHeal(targetChar)
     if not targetChar then return false end
     
-    -- Usar HealEvent con 100%
     if healRemotes.HealEvent then
         pcall(function()
             healRemotes.HealEvent:FireServer(targetChar, 100)
         end)
     end
     
-    -- También usar Healthy (AdrenalineShot)
     if healRemotes.Healthy then
         pcall(function()
             healRemotes.Healthy:FireServer(targetChar)
         end)
     end
     
-    -- Actualizar atributos
     pcall(function()
         targetChar:SetAttribute("Health", 100)
         targetChar:SetAttribute("CurrentHealth", 100)
         targetChar:SetAttribute("HealProgress", 100)
         targetChar:SetAttribute("IsHealing", true)
-    end)
-    
-    -- Actualizar Humanoid
-    pcall(function()
+        
         local humanoid = targetChar:FindFirstChildOfClass("Humanoid")
         if humanoid then
             humanoid.Health = humanoid.MaxHealth
@@ -1446,26 +1420,20 @@ local function instantHeal(targetChar)
     return true
 end
 
--- Configurar el sistema
+-- Configurar sistema
 local function setupInstaHealSystem()
     if healConnection then
         healConnection:Disconnect()
         healConnection = nil
     end
     
-    -- Encontrar RemoteEvents
     setupViolenceDistrictRemotes()
-    
-    -- Interceptar HealEvent (MÉTODO PRINCIPAL)
     interceptHealEvent()
-    
-    -- Interceptar ProximityPrompts
     interceptHealingPrompts()
     
-    -- Iniciar loop para auto-funciones
+    -- Loop simple sin auto-funciones
     healConnection = RunService.Heartbeat:Connect(function()
-        autoReviveFunction()
-        autoHealFunction()
+        -- Solo mantener conexión, sin funcionalidad extra
     end)
 end
 
@@ -1476,13 +1444,17 @@ local function cleanupInstaHealSystem()
         healConnection = nil
     end
     
-    -- Restaurar HealEvent original
     if healRemotes.HealEvent and originalFunctions[healRemotes.HealEvent] then
         healRemotes.HealEvent.FireServer = originalFunctions[healRemotes.HealEvent]
     end
     
-    -- Limpiar tabla
-    table.clear(originalFunctions)
+    for prompt, connections in pairs(originalFunctions) do
+        if prompt:IsA("ProximityPrompt") and connections.triggered then
+            connections.triggered:Disconnect()
+        end
+    end
+    
+    originalFunctions = {}
 end
 
 SurvivorTab:CreateSection("Insta Heal")
@@ -1494,18 +1466,19 @@ SurvivorTab:CreateToggle({
         instaHealEnabled = v
         
         if v then
-            setupInstaHealSystem()
-            
-            -- Curar inmediatamente al activar
-            task.spawn(function()
-                task.wait(1)
-                local char = LP.Character
-                if char then
-                    instantHeal(char)
-                end
+            local success, err = pcall(function()
+                setupInstaHealSystem()
             end)
+            
+            if not success then
+                instaHealEnabled = false
+                return
+            end
+            
         else
-            cleanupInstaHealSystem()
+            pcall(function()
+                cleanupInstaHealSystem()
+            end)
         end
     end
 })

@@ -1266,7 +1266,7 @@ SurvivorTab:CreateToggle({
 })
 
 -- ============================================
--- SISTEMA INSTA HEAL
+-- SISTEMA INSTA HEAL PARA VIOLENCE DISTRICT
 -- ============================================
 
 local instaHealEnabled = false
@@ -1274,444 +1274,289 @@ local autoReviveEnabled = false
 local healAllEnabled = false
 local healRadius = 50
 local healConnection = nil
-local originalHealRemotes = {}
-local healRemoteCache = {}
-local toolIntercepts = {}
+
+-- Variables específicas para Violence District
 local lastHealTime = 0
-local HEAL_COOLDOWN = 0.3
+local HEAL_INTERVAL = 0.5
+local foundGameRemotes = false
+local violenceDistrictRemotes = {}
 
-local healKeywords = {
-    "heal", "health", "revive", "cure", "medkit", "medical", "firstaid",
-    "bandage", "restore", "recover", "treat", "life", "hp", "revival"
-}
-
-local damageKeywords = {
-    "damage", "hurt", "hit", "attack", "injure", "wound", "bleed", "death", "kill"
-}
-
-
-local healHash = {}
-local damageHash = {}
-for _, word in ipairs(healKeywords) do healHash[word] = true end
-for _, word in ipairs(damageKeywords) do damageHash[word] = true end
-
-local function isHealRelated(name)
-    if not name then return false end
-    local nameLower = name:lower()
-    for word in pairs(healHash) do
-        if nameLower:find(word) then return true end
-    end
-    return false
-end
-
-local function isDamageRelated(name)
-    if not name then return false end
-    local nameLower = name:lower()
-    for word in pairs(damageHash) do
-        if nameLower:find(word) then return true end
-    end
-    return false
-end
-
-local function findCriticalRemotes()
-    local criticalRemotes = {}
+-- Función para detectar el sistema de curación de Violence District
+local function detectViolenceDistrictSystem()
+    violenceDistrictRemotes = {}
     
-    local searchLocations = {
-        ReplicatedStorage,
-        workspace,
-        game:GetService("ReplicatedFirst"),
-        LP:WaitForChild("PlayerGui"),
-        LP:WaitForChild("Backpack"),
-        game:GetService("StarterPack"),
-        game:GetService("StarterGui")
-    }
-    
-    for _, location in ipairs(searchLocations) do
-        if location and location:IsDescendantOf(game) then
-            for _, obj in ipairs(location:GetDescendants()) do
-                if obj:IsA("RemoteEvent") or obj:IsA("RemoteFunction") then
-                    if isHealRelated(obj.Name) or isDamageRelated(obj.Name) then
-                        criticalRemotes[obj] = true
-                    end
-                end
+    -- Buscar RemoteEvents específicos de Violence District
+    for _, obj in ipairs(ReplicatedStorage:GetDescendants()) do
+        if obj:IsA("RemoteEvent") then
+            local name = obj.Name:lower()
+            
+            -- Posibles nombres en Violence District
+            if name:find("heal") or name:find("health") or name:find("revive") or 
+               name:find("medkit") or name:find("medical") or name:find("cure") or
+               name:find("firstaid") or name:find("bandage") then
+                table.insert(violenceDistrictRemotes, obj)
+            end
+            
+            -- También buscar eventos genéricos
+            if name:find("player") and (name:find("health") or name:find("heal")) then
+                table.insert(violenceDistrictRemotes, obj)
             end
         end
     end
     
-    return criticalRemotes
-end
-
-local function interceptAllCriticalRemotes()
-    for remote, original in pairs(originalHealRemotes) do
-        if remote and remote.Parent and original then
-            if remote:IsA("RemoteEvent") then
-                remote.FireServer = original
-            elseif remote:IsA("RemoteFunction") then
-                remote.InvokeServer = original
+    -- Buscar en Workspace (a veces están ahí)
+    for _, obj in ipairs(workspace:GetDescendants()) do
+        if obj:IsA("RemoteEvent") then
+            local name = obj.Name:lower()
+            if name:find("heal") or name:find("health") then
+                table.insert(violenceDistrictRemotes, obj)
             end
         end
     end
-    table.clear(originalHealRemotes)
     
-    local criticalRemotes = findCriticalRemotes()
-    
-    for remote in pairs(criticalRemotes) do
-        if not originalHealRemotes[remote] then
-            if remote:IsA("RemoteEvent") then
-                originalHealRemotes[remote] = remote.FireServer
-                
-                remote.FireServer = newcclosure(function(self, ...)
-                    local args = {...}
-                    local now = tick()
-                    
-                    if instaHealEnabled and now - lastHealTime > HEAL_COOLDOWN then
-                        if #args >= 1 then
-                            local target = args[1]
-                            local action = args[2]
-                            local value = args[3]
-                            
-                            if isHealRelated(remote.Name) then
-                                local newArgs = {}
-                                for i, arg in ipairs(args) do
-                                    if i == 3 and type(arg) == "number" and arg < 100 then
-                                        newArgs[i] = 100
-                                    elseif i == 2 and type(arg) == "string" and isHealRelated(arg) then
-                                        newArgs[i] = "FullHeal"
-                                    else
-                                        newArgs[i] = arg
-                                    end
-                                end
-                                
-                                if #newArgs < 3 then
-                                    newArgs[3] = 100
-                                end
-                                
-                                lastHealTime = now
-                                return originalHealRemotes[remote](self, unpack(newArgs))
-                            end
-                            
-                            if isDamageRelated(remote.Name) then
-                                if typeof(target) == "Instance" and target:IsA("Model") then
-                                    local isLocalPlayer = false
-                                    for _, player in ipairs(Players:GetPlayers()) do
-                                        if player.Character == target then
-                                            isLocalPlayer = true
-                                            break
-                                        end
-                                    end
-                                    
-                                    if isLocalPlayer then
-                                        task.spawn(function()
-                                            task.wait(0.1)
-                                            if instaHealEnabled then
-                                                for healRemote in pairs(criticalRemotes) do
-                                                    if isHealRelated(healRemote.Name) then
-                                                        pcall(function()
-                                                            healRemote:FireServer(target, "Heal", 100)
-                                                        end)
-                                                    end
-                                                end
-                                            end
-                                        end)
-                                        return nil
-                                    end
-                                end
-                            end
-                        end
+    -- Buscar módulos de salud
+    for _, obj in ipairs(ReplicatedStorage:GetDescendants()) do
+        if obj:IsA("ModuleScript") then
+            local name = obj.Name:lower()
+            if name:find("health") or name:find("medical") or name:find("heal") then
+                pcall(function()
+                    local module = require(obj)
+                    if module.heal or module.Heal or module.setHealth then
+                        table.insert(violenceDistrictRemotes, {module = module, name = obj.Name})
                     end
-                    
-                    return originalHealRemotes[remote](self, ...)
-                end)
-                
-            elseif remote:IsA("RemoteFunction") then
-                originalHealRemotes[remote] = remote.InvokeServer
-                
-                remote.InvokeServer = newcclosure(function(self, ...)
-                    if instaHealEnabled then
-                        local args = {...}
-                        if #args >= 2 then
-                            local target = args[1]
-                            local action = args[2]
-                            
-                            if typeof(target) == "Instance" and target:IsA("Model") and 
-                               action and type(action) == "string" and isHealRelated(action) then
-                                return true, 100, "InstantHeal"
-                            end
-                        end
-                    end
-                    
-                    return originalHealRemotes[remote](self, ...)
                 end)
             end
         end
     end
+    
+    foundGameRemotes = #violenceDistrictRemotes > 0
+    return foundGameRemotes
 end
 
-local function forceCompleteHeal(targetChar)
+-- Función para intentar curación con diferentes métodos
+local function attemptViolenceDistrictHeal(targetChar)
     if not targetChar or not targetChar:IsA("Model") then return false end
     
     local now = tick()
-    if now - lastHealTime < HEAL_COOLDOWN then return false end
+    if now - lastHealTime < HEAL_INTERVAL then return false end
     
     local success = false
     
-    for remote, original in pairs(originalHealRemotes) do
-        if remote and remote.Parent and isHealRelated(remote.Name) then
+    -- Método 1: Usar RemoteEvents encontrados
+    for _, remote in ipairs(violenceDistrictRemotes) do
+        if typeof(remote) == "Instance" and remote:IsA("RemoteEvent") then
             pcall(function()
-                if remote:IsA("RemoteEvent") then
-                    remote:FireServer(targetChar, "Heal", 100)
-                    remote:FireServer(targetChar, "CompleteHeal", true)
-                    remote:FireServer(targetChar, "FullHeal", 100)
-                    remote:FireServer(targetChar, "Revive", true)
+                -- Intentar diferentes formatos de argumentos
+                remote:FireServer(targetChar, "Heal", 100)
+                remote:FireServer(targetChar, 100)
+                remote:FireServer("Heal", targetChar, 100)
+                remote:FireServer("FullHeal", targetChar)
+                success = true
+            end)
+        elseif remote.module then
+            -- Método 2: Usar módulos
+            pcall(function()
+                if remote.module.heal then
+                    remote.module.heal(targetChar, 100)
+                    success = true
+                elseif remote.module.Heal then
+                    remote.module.Heal(targetChar, 100)
+                    success = true
+                elseif remote.module.setHealth then
+                    remote.module.setHealth(targetChar, 100)
                     success = true
                 end
             end)
         end
     end
     
+    -- Método 3: Modificar Humanoid directamente (backup)
     if not success then
-        local commonEvents = {
-            "HealthEvent", "HealEvent", "ReviveEvent", "MedicalEvent",
-            "FirstAid", "MedkitUse", "HealRemote", "ReviveRemote",
-            "PlayerHeal", "SurvivorHeal", "HealthSystem"
-        }
-        
-        for _, eventName in ipairs(commonEvents) do
-            local remote = ReplicatedStorage:FindFirstChild(eventName)
-            if remote and remote:IsA("RemoteEvent") then
-                pcall(function()
-                    remote:FireServer(targetChar, 100)
-                    remote:FireServer(targetChar, "heal", 100)
-                    remote:FireServer(targetChar, "revive", true)
-                    success = true
-                end)
-            end
-        end
-    end
-    
-    if targetChar:IsDescendantOf(workspace) then
         pcall(function()
             local humanoid = targetChar:FindFirstChildOfClass("Humanoid")
             if humanoid then
                 humanoid.Health = humanoid.MaxHealth
                 
+                -- Si está muerto, intentar revivir
                 if humanoid:GetState() == Enum.HumanoidStateType.Dead then
                     humanoid:ChangeState(Enum.HumanoidStateType.Running)
                 end
-                
-                for _, child in ipairs(targetChar:GetChildren()) do
-                    if child:IsA("BoolValue") then
-                        local name = child.Name:lower()
-                        if name:find("injured") or name:find("downed") or name:find("dying") then
-                            child:Destroy()
-                        end
-                    end
-                end
-                
                 success = true
             end
         end)
     end
     
+    -- Método 4: Modificar atributos comunes en Violence District
     pcall(function()
         targetChar:SetAttribute("Health", 100)
+        targetChar:SetAttribute("CurrentHealth", 100)
         targetChar:SetAttribute("HealProgress", 100)
+        targetChar:SetAttribute("IsHealing", true)
+        
+        -- Atributos específicos de herido/muerto
         targetChar:SetAttribute("Injured", false)
-        targetChar:SetAttribute("Downed", false)
+        targetChar:SetAttribute("Downed", false) 
         targetChar:SetAttribute("Dying", false)
         targetChar:SetAttribute("Dead", false)
+        targetChar:SetAttribute("KnockedOut", false)
+        
         success = true
     end)
     
-    lastHealTime = now
+    -- Método 5: Buscar scripts locales de curación en el personaje
+    pcall(function()
+        for _, script in ipairs(targetChar:GetDescendants()) do
+            if script:IsA("Script") or script:IsA("LocalScript") then
+                local name = script.Name:lower()
+                if name:find("heal") or name:find("health") then
+                    -- Intentar modificar variables en el script
+                    pcall(function()
+                        local env = getfenv(script)
+                        if env.health then env.health = 100 end
+                        if env.Health then env.Health = 100 end
+                        if env.currentHealth then env.currentHealth = 100 end
+                        if env.CurrentHealth then env.CurrentHealth = 100 end
+                        success = true
+                    end)
+                end
+            end
+        end
+    end)
+    
+    -- Método 6: Simular uso de herramientas de curación
+    pcall(function()
+        -- Buscar medkits en el inventario
+        local player = Players:GetPlayerFromCharacter(targetChar)
+        if player then
+            local backpack = player:FindFirstChild("Backpack")
+            if backpack then
+                for _, tool in ipairs(backpack:GetChildren()) do
+                    if tool:IsA("Tool") and tool.Name:lower():find("med") then
+                        -- Activar tool
+                        tool:SetAttribute("InUse", true)
+                        
+                        -- Buscar y ejecutar script de uso
+                        for _, script in ipairs(tool:GetDescendants()) do
+                            if script:IsA("Script") then
+                                pcall(function()
+                                    local env = getfenv(script)
+                                    if env.use then env.use(targetChar) end
+                                    if env.Use then env.Use(targetChar) end
+                                    if env.activate then env.activate(targetChar) end
+                                end)
+                            end
+                        end
+                        success = true
+                    end
+                end
+            end
+        end
+    end)
+    
+    if success then
+        lastHealTime = now
+    end
+    
     return success
 end
 
-local function interceptHealingToolsAndScripts()
-    for tool, data in pairs(toolIntercepts) do
-        if data and data.original then
-            pcall(function()
-                local env = getfenv(data.script)
-                env[data.funcName] = data.original
-            end)
-        end
-    end
-    table.clear(toolIntercepts)
-    
-    local function setupToolInterception(tool)
-        if not tool or not tool:IsA("Tool") then return end
-        
-        local toolName = tool.Name:lower()
-        local isHealingTool = false
-        
-        for keyword in pairs(healHash) do
-            if toolName:find(keyword) then
-                isHealingTool = true
-                break
-            end
-        end
-        
-        if not isHealingTool then return end
-        
-        for _, script in ipairs(tool:GetDescendants()) do
-            if script:IsA("LocalScript") or script:IsA("Script") then
-                pcall(function()
-                    local env = getfenv(script)
-                    
-                    local funcNames = {"use", "Use", "activate", "Activate", "heal", "Heal"}
-                    
-                    for _, funcName in ipairs(funcNames) do
-                        if env[funcName] and type(env[funcName]) == "function" then
-                            local originalFunc = env[funcName]
-                            
-                            env[funcName] = function(...)
-                                local args = {...}
-                                
-                                if instaHealEnabled then
-                                    local target = args[1] or LP.Character
-                                    if target and target:IsA("Model") then
-                                        forceCompleteHeal(target)
-                                        return true, "InstantHeal"
-                                    end
-                                end
-                                
-                                return originalFunc(...)
-                            end
-                            
-                            toolIntercepts[tool] = {
-                                script = script,
-                                funcName = funcName,
-                                original = originalFunc
-                            }
-                        end
-                    end
-                end)
-            end
-        end
-    end
-    
-    local char = LP.Character
-    if char then
-        for _, tool in ipairs(char:GetChildren()) do
-            setupToolInterception(tool)
-        end
-    end
-    
-    local backpack = LP:FindFirstChild("Backpack")
-    if backpack then
-        for _, tool in ipairs(backpack:GetChildren()) do
-            setupToolInterception(tool)
-        end
-    end
-    
-    if char then
-        char.ChildAdded:Connect(function(child)
-            if child:IsA("Tool") then
-                task.wait(0.5)
-                setupToolInterception(child)
-            end
-        end)
-    end
-    
-    if backpack then
-        backpack.ChildAdded:Connect(function(child)
-            if child:IsA("Tool") then
-                task.wait(0.5)
-                setupToolInterception(child)
-            end
-        end)
-    end
-end
-
-local function intelligentAutoHeal()
+-- Función principal de auto-curación
+local function violenceDistrictAutoHeal()
     if not instaHealEnabled then return end
     
     local myChar = LP.Character
     if not myChar then return end
     
-    local now = tick()
+    -- Detectar sistema si no se ha hecho
+    if not foundGameRemotes then
+        detectViolenceDistrictSystem()
+    end
     
-    if autoReviveEnabled then
-        if not healRemoteCache.lastReviveCheck or (now - healRemoteCache.lastReviveCheck) > 0.5 then
-            local humanoid = myChar:FindFirstChildOfClass("Humanoid")
-            if humanoid and humanoid.Health <= 0 then
-                forceCompleteHeal(myChar)
-            end
-            healRemoteCache.lastReviveCheck = now
+    -- Auto-curarse a sí mismo
+    local humanoid = myChar:FindFirstChildOfClass("Humanoid")
+    if humanoid then
+        -- Auto-revivir si está muerto
+        if autoReviveEnabled and (humanoid.Health <= 0 or humanoid:GetState() == Enum.HumanoidStateType.Dead) then
+            attemptViolenceDistrictHeal(myChar)
+        end
+        
+        -- Auto-curar si está herido
+        if humanoid.Health < humanoid.MaxHealth then
+            attemptViolenceDistrictHeal(myChar)
+        end
+        
+        -- Verificar atributos de herido
+        if myChar:GetAttribute("Injured") or myChar:GetAttribute("Downed") or myChar:GetAttribute("Dying") then
+            attemptViolenceDistrictHeal(myChar)
         end
     end
     
-    if not healRemoteCache.lastSelfHeal or (now - healRemoteCache.lastSelfHeal) > 1 then
-        local humanoid = myChar:FindFirstChildOfClass("Humanoid")
-        if humanoid and humanoid.Health < humanoid.MaxHealth then
-            forceCompleteHeal(myChar)
-        end
-        
-        if myChar:GetAttribute("Injured") or 
-           myChar:GetAttribute("Downed") or 
-           myChar:GetAttribute("Dying") then
-            forceCompleteHeal(myChar)
-        end
-        
-        healRemoteCache.lastSelfHeal = now
-    end
-    
+    -- Curar a todos en radio
     if healAllEnabled then
-        if not healRemoteCache.lastTeamHeal or (now - healRemoteCache.lastTeamHeal) > 2 then
-            local myRoot = myChar:FindFirstChild("HumanoidRootPart")
-            if myRoot then
-                for _, player in ipairs(Players:GetPlayers()) do
-                    if player.Character then
-                        local targetChar = player.Character
-                        local targetRoot = targetChar:FindFirstChild("HumanoidRootPart")
+        local myRoot = myChar:FindFirstChild("HumanoidRootPart")
+        if myRoot then
+            for _, player in ipairs(Players:GetPlayers()) do
+                if player.Character then
+                    local targetChar = player.Character
+                    local targetRoot = targetChar:FindFirstChild("HumanoidRootPart")
+                    
+                    if targetRoot then
+                        local distance = (myRoot.Position - targetRoot.Position).Magnitude
                         
-                        if targetRoot and (myRoot.Position - targetRoot.Position).Magnitude < healRadius then
-                            local humanoid = targetChar:FindFirstChildOfClass("Humanoid")
-                            if humanoid and humanoid.Health < humanoid.MaxHealth then
-                                forceCompleteHeal(targetChar)
+                        if distance <= healRadius then
+                            local targetHumanoid = targetChar:FindFirstChildOfClass("Humanoid")
+                            if targetHumanoid and targetHumanoid.Health < targetHumanoid.MaxHealth then
+                                attemptViolenceDistrictHeal(targetChar)
                             end
                         end
                     end
                 end
             end
-            healRemoteCache.lastTeamHeal = now
         end
     end
 end
 
-local function setupUltimateInstaHeal()
+-- Configurar sistema específico para Violence District
+local function setupViolenceDistrictHeal()
     if healConnection then
         healConnection:Disconnect()
         healConnection = nil
     end
     
-    interceptAllCriticalRemotes()
-    interceptHealingToolsAndScripts()
+    -- Detectar sistema del juego
+    detectViolenceDistrictSystem()
     
+    -- Iniciar loop de curación
     healConnection = RunService.Heartbeat:Connect(function()
-        if not instaHealEnabled then return end
-        
-        local char = LP.Character
-        if char then
-            pcall(function()
-                char:SetAttribute("HealProgress", 100)
-                char:SetAttribute("IsHealing", true)
-            end)
-        end
-        
-        intelligentAutoHeal()
+        violenceDistrictAutoHeal()
     end)
     
+    -- Curar inmediatamente al activar
     task.spawn(function()
-        task.wait(0.5)
+        task.wait(1)
         local char = LP.Character
         if char then
-            forceCompleteHeal(char)
+            attemptViolenceDistrictHeal(char)
         end
     end)
 end
 
-SurvivorTab:CreateSection("Insta Heal")
+-- Limpiar sistema
+local function cleanupViolenceDistrictHeal()
+    if healConnection then
+        healConnection:Disconnect()
+        healConnection = nil
+    end
+    
+    violenceDistrictRemotes = {}
+    foundGameRemotes = false
+end
+
+-- ============================================
+-- INTERFAZ PARA VIOLENCE DISTRICT
+-- ============================================
+
+SurvivorTab:CreateSection("Insta Heal - Violence District")
 
 -- Toggle principal
 SurvivorTab:CreateToggle({
@@ -1721,72 +1566,32 @@ SurvivorTab:CreateToggle({
         instaHealEnabled = v
         
         if v then
-            setupUltimateInstaHeal()
-            
-            task.spawn(function()
-                task.wait(1)
-                local char = LP.Character
-                if char then
-                    forceCompleteHeal(char)
-                end
-            end)
-            
-            LP.CharacterAdded:Connect(function(char)
-                task.wait(1.5)
-                if instaHealEnabled then
-                    setupUltimateInstaHeal()
-                    task.wait(0.5)
-                    forceCompleteHeal(char)
-                end
-            end)
-            
+            setupViolenceDistrictHeal()
         else
-            if healConnection then
-                healConnection:Disconnect()
-                healConnection = nil
-            end
-            
-            for remote, original in pairs(originalHealRemotes) do
-                if remote and remote.Parent and original then
-                    if remote:IsA("RemoteEvent") then
-                        remote.FireServer = original
-                    elseif remote:IsA("RemoteFunction") then
-                        remote.InvokeServer = original
-                    end
-                end
-            end
-            table.clear(originalHealRemotes)
-            
-            for tool, data in pairs(toolIntercepts) do
-                if data and data.original then
-                    pcall(function()
-                        local env = getfenv(data.script)
-                        env[data.funcName] = data.original
-                    end)
-                end
-            end
-            table.clear(toolIntercepts)
-            table.clear(healRemoteCache)
+            cleanupViolenceDistrictHeal()
         end
     end
 })
 
+-- Toggle para auto-revivir
 SurvivorTab:CreateToggle({
-    Name = " Auto Revivir y curacion",
+    Name = "Auto Revivir",
     CurrentValue = false,
     Callback = function(v)
         autoReviveEnabled = v
     end
 })
 
+-- Toggle para curar a todos en radio
 SurvivorTab:CreateToggle({
-    Name = " Curar a Todos en Radio",
+    Name = "Curar a Todos en Radio",
     CurrentValue = false,
     Callback = function(v)
         healAllEnabled = v
     end
 })
 
+-- Slider para radio de curación
 SurvivorTab:CreateSlider({
     Name = "Radio de Curación",
     Range = {5, 100},
@@ -1795,6 +1600,48 @@ SurvivorTab:CreateSlider({
     CurrentValue = healRadius,
     Callback = function(v)
         healRadius = v
+    end
+})
+
+-- Botón de debug para probar curación
+SurvivorTab:CreateButton({
+    Name = "Probar Curación",
+    Callback = function()
+        local char = LP.Character
+        if char then
+            print("=== PRUEBA DE CURA VIOLENCE DISTRICT ===")
+            
+            -- Detectar sistema
+            detectViolenceDistrictSystem()
+            print("RemoteEvents encontrados:", #violenceDistrictRemotes)
+            
+            for i, remote in ipairs(violenceDistrictRemotes) do
+                if typeof(remote) == "Instance" then
+                    print(i, "RemoteEvent:", remote.Name, "Path:", remote:GetFullName())
+                else
+                    print(i, "Módulo:", remote.name)
+                end
+            end
+            
+            -- Intentar curar
+            local success = attemptViolenceDistrictHeal(char)
+            print("Curación exitosa:", success)
+            
+            -- Mostrar estado actual
+            local humanoid = char:FindFirstChildOfClass("Humanoid")
+            if humanoid then
+                print("Salud actual:", humanoid.Health, "/", humanoid.MaxHealth)
+            end
+            
+            -- Mostrar atributos
+            local attrs = {"Health", "CurrentHealth", "Injured", "Downed", "Dying"}
+            for _, attr in ipairs(attrs) do
+                local value = char:GetAttribute(attr)
+                if value ~= nil then
+                    print("Atributo", attr .. ":", value)
+                end
+            end
+        end
     end
 })
 
@@ -2392,7 +2239,7 @@ local function setupAntiBlind()
 end
 
 KillerTab:CreateToggle({
-    Name = "Anti-Stun (Pallets y Stuns)",
+    Name = "Anti-Stun",
     CurrentValue = false,
     Callback = function(v)
         antiStunEnabled = v
@@ -2432,7 +2279,7 @@ KillerTab:CreateToggle({
 })
 
 KillerTab:CreateToggle({
-    Name = "Anti-Blind (Flashlights y Flares)",
+    Name = "Anti-Blind",
     CurrentValue = false,
     Callback = function(v)
         antiBlindEnabled = v
@@ -2475,7 +2322,7 @@ KillerTab:CreateToggle({
 -- SISTEMA HITBOX EXPANDER
 -- ============================================
 
-KillerTab:CreateSection("Hitbox Expander (Survivors)")
+KillerTab:CreateSection("Hitbox (Survivors)")
 
 local hitboxExpanderEnabled = false
 local hitboxSize = 15
@@ -2702,7 +2549,7 @@ KillerTab:CreateToggle({
 })
 
 KillerTab:CreateToggle({
-    Name = "Mostrar Esferas Verdes",
+    Name = "Mostrar Hitbox",
     CurrentValue = false,
     Flag = "ShowHitboxSpheres",
     Callback = function(v)

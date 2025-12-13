@@ -1266,158 +1266,218 @@ SurvivorTab:CreateToggle({
 })
 
 -- ============================================
--- INSTA HEAL SIMPLIFICADO
+-- INSTA HEAL DETECTANDO INTERACCIÓN CON SURVIVORS
 -- ============================================
 
 local instaHealEnabled = false
 local healConnection = nil
-local originalFunctions = {}
 
--- RemoteEvents específicos de Violence District
-local healRemotes = {
-    HealEvent = nil,
-    HealAnim = nil,
-    HealAnimRec = nil,
-    Stophealing = nil,
-    Healthy = nil
-}
+-- RemoteEvents
+local HealEvent = nil
+local HealAnim = nil
+
+-- Variables para seguimiento
+local lastInteractionTime = 0
+local INTERACTION_COOLDOWN = 1.0
 
 -- Encontrar RemoteEvents
-local function setupViolenceDistrictRemotes()
+local function findHealingRemotes()
     local remotesFolder = ReplicatedStorage:FindFirstChild("Remotes")
     if not remotesFolder then return false end
     
     local healingFolder = remotesFolder:FindFirstChild("Healing")
-    local itemsFolder = remotesFolder:FindFirstChild("Items")
-    
     if healingFolder then
-        healRemotes.HealEvent = healingFolder:FindFirstChild("HealEvent")
-        healRemotes.HealAnim = healingFolder:FindFirstChild("HealAnim")
-        healRemotes.HealAnimRec = healingFolder:FindFirstChild("HealAnimRec")
-        healRemotes.Stophealing = healingFolder:FindFirstChild("Stophealing")
+        HealEvent = healingFolder:FindFirstChild("HealEvent")
+        HealAnim = healingFolder:FindFirstChild("HealAnim")
     end
     
-    if itemsFolder then
-        local adrenalineFolder = itemsFolder:FindFirstChild("AdrenalineShot")
-        if adrenalineFolder then
-            healRemotes.Healthy = adrenalineFolder:FindFirstChild("Healthy")
-        end
-    end
-    
-    return healRemotes.HealEvent ~= nil
+    return HealEvent ~= nil
 end
 
--- Interceptar HealEvent
-local function interceptHealEvent()
-    if not healRemotes.HealEvent then return false end
-    
-    -- Guardar función original
-    local originalFire = healRemotes.HealEvent.FireServer
-    
-    -- Interceptar
-    healRemotes.HealEvent.FireServer = function(self, ...)
-        local args = {...}
-        
-        if instaHealEnabled and #args >= 1 then
-            local target = args[1]
-            
-            if typeof(target) == "Instance" and target:IsA("Model") then
-                -- Modificar para curación completa
-                local newArgs = {}
-                newArgs[1] = target
-                newArgs[2] = 100  -- 100% de salud
-                
-                -- Copiar resto de argumentos
-                for i = 3, #args do
-                    newArgs[i] = args[i]
-                end
-                
-                -- Actualizar atributos
-                pcall(function()
-                    target:SetAttribute("Health", 100)
-                    target:SetAttribute("CurrentHealth", 100)
-                    target:SetAttribute("HealProgress", 100)
-                    target:SetAttribute("IsHealing", true)
-                end)
-                
-                -- Actualizar Humanoid
-                pcall(function()
-                    local humanoid = target:FindFirstChildOfClass("Humanoid")
-                    if humanoid then
-                        humanoid.Health = humanoid.MaxHealth
-                    end
-                end)
-                
-                return originalFire(self, unpack(newArgs))
-            end
-        end
-        
-        return originalFire(self, ...)
-    end
-    
-    originalFunctions[healRemotes.HealEvent] = originalFire
-    return true
-end
-
--- Interceptar ProximityPrompts
-local function interceptHealingPrompts()
-    for _, prompt in ipairs(workspace:GetDescendants()) do
-        if prompt:IsA("ProximityPrompt") then
-            local promptName = prompt.Name:lower()
-            
-            if promptName:find("heal") or promptName:find("revive") or promptName:find("medkit") then
-                
-                if not originalFunctions[prompt] then
-                    local promptConnections = {}
-                    
-                    local newConnection = prompt.Triggered:Connect(function(player)
-                        if player == LP and instaHealEnabled then
-                            local target = prompt.Parent
-                            if target and target:IsA("Model") then
-                                if healRemotes.HealEvent then
-                                    healRemotes.HealEvent:FireServer(target, 100)
-                                end
-                            end
-                        end
-                    end)
-                    
-                    promptConnections["triggered"] = newConnection
-                    originalFunctions[prompt] = promptConnections
-                end
-            end
-        end
-    end
-end
-
--- Función de curación
-local function instantHeal(targetChar)
+-- Verificar si un survivor necesita curación
+local function needsHealing(targetChar)
     if not targetChar then return false end
     
-    if healRemotes.HealEvent then
-        pcall(function()
-            healRemotes.HealEvent:FireServer(targetChar, 100)
-        end)
+    -- Verificar por atributos
+    local health = targetChar:GetAttribute("Health") or targetChar:GetAttribute("CurrentHealth")
+    if health and health < 100 then
+        return true
     end
     
-    if healRemotes.Healthy then
-        pcall(function()
-            healRemotes.Healthy:FireServer(targetChar)
-        end)
+    -- Verificar por Humanoid
+    local humanoid = targetChar:FindFirstChildOfClass("Humanoid")
+    if humanoid and humanoid.Health < humanoid.MaxHealth then
+        return true
     end
+    
+    -- Verificar atributos de estado
+    if targetChar:GetAttribute("Injured") or 
+       targetChar:GetAttribute("Downed") or 
+       targetChar:GetAttribute("Dying") then
+        return true
+    end
+    
+    return false
+end
+
+-- Enviar curación completa
+local function sendCompleteHeal(target)
+    if not target or not HealEvent then return false end
+    
+    local now = tick()
+    if now - lastInteractionTime < INTERACTION_COOLDOWN then return false end
     
     pcall(function()
-        targetChar:SetAttribute("Health", 100)
-        targetChar:SetAttribute("CurrentHealth", 100)
-        targetChar:SetAttribute("HealProgress", 100)
-        targetChar:SetAttribute("IsHealing", true)
+        -- Enviar evento principal
+        HealEvent:FireServer(target, 100)
         
-        local humanoid = targetChar:FindFirstChildOfClass("Humanoid")
+        -- Si existe HealAnim, enviar también
+        if HealAnim then
+            HealAnim:FireServer(target, true)  -- Iniciar animación
+        end
+        
+        -- Actualizar atributos
+        target:SetAttribute("Health", 100)
+        target:SetAttribute("CurrentHealth", 100)
+        target:SetAttribute("HealProgress", 100)
+        
+        -- Humanoid
+        local humanoid = target:FindFirstChildOfClass("Humanoid")
         if humanoid then
             humanoid.Health = humanoid.MaxHealth
         end
     end)
     
+    lastInteractionTime = now
     return true
+end
+
+-- Detectar cuando interactúas con algo
+local function setupInteractionDetection()
+    -- Monitorear todos los ProximityPrompts
+    workspace.DescendantAdded:Connect(function(descendant)
+        if descendant:IsA("ProximityPrompt") then
+            task.wait(0.5)  -- Esperar a que se establezca
+            
+            descendant.Triggered:Connect(function(player)
+                if player == LP and instaHealEnabled then
+                    local target = descendant.Parent
+                    if target and target:IsA("Model") then
+                        -- Verificar si es un survivor que necesita curación
+                        for _, otherPlayer in ipairs(Players:GetPlayers()) do
+                            if otherPlayer.Character == target then
+                                if needsHealing(target) then
+                                    task.wait(0.1)  -- Pequeño delay
+                                    sendCompleteHeal(target)
+                                end
+                                break
+                            end
+                        end
+                    end
+                end
+            end)
+        end
+    end)
+    
+    -- También conectar prompts existentes
+    for _, prompt in ipairs(workspace:GetDescendants()) do
+        if prompt:IsA("ProximityPrompt") then
+            prompt.Triggered:Connect(function(player)
+                if player == LP and instaHealEnabled then
+                    local target = prompt.Parent
+                    if target and target:IsA("Model") then
+                        for _, otherPlayer in ipairs(Players:GetPlayers()) do
+                            if otherPlayer.Character == target then
+                                if needsHealing(target) then
+                                    task.wait(0.1)
+                                    sendCompleteHeal(target)
+                                end
+                                break
+                            end
+                        end
+                    end
+                end
+            end)
+        end
+    end
+end
+
+-- Detectar cambios en atributos de curación
+local function setupAttributeDetection()
+    local char = LP.Character
+    if not char then return end
+    
+    -- Detectar cuando el atributo IsHealing cambia
+    char:GetAttributeChangedSignal("IsHealing"):Connect(function()
+        if instaHealEnabled and char:GetAttribute("IsHealing") == true then
+            -- Buscar survivor cercano que necesite curación
+            local myRoot = char:FindFirstChild("HumanoidRootPart")
+            if myRoot then
+                for _, player in ipairs(Players:GetPlayers()) do
+                    if player ~= LP and player.Character then
+                        local targetChar = player.Character
+                        local targetRoot = targetChar:FindFirstChild("HumanoidRootPart")
+                        
+                        if targetRoot then
+                            local distance = (myRoot.Position - targetRoot.Position).Magnitude
+                            if distance < 10 and needsHealing(targetChar) then
+                                sendCompleteHeal(targetChar)
+                                break
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end)
+end
+
+-- Monitorear cuando estás cerca de un survivor herido
+local function monitorNearbySurvivors()
+    if not instaHealEnabled then return end
+    
+    local char = LP.Character
+    if not char then return end
+    
+    local myRoot = char:FindFirstChild("HumanoidRootPart")
+    if not myRoot then return end
+    
+    -- Buscar survivors heridos cerca
+    for _, player in ipairs(Players:GetPlayers()) do
+        if player ~= LP and player.Character then
+            local targetChar = player.Character
+            local targetRoot = targetChar:FindFirstChild("HumanoidRootPart")
+            
+            if targetRoot then
+                local distance = (myRoot.Position - targetRoot.Position).Magnitude
+                
+                -- Si está muy cerca y necesita curación
+                if distance < 5 and needsHealing(targetChar) then
+                    -- Verificar si estamos interactuando (basado en orientación/mirada)
+                    local myDirection = myRoot.CFrame.LookVector
+                    local toTarget = (targetRoot.Position - myRoot.Position).Unit
+                    
+                    local dotProduct = myDirection:Dot(toTarget)
+                    
+                    -- Si estamos mirando hacia el target (ángulo < 45 grados)
+                    if dotProduct > 0.7 then  -- cos(45°) ≈ 0.7
+                        -- Verificar si hay un ProximityPrompt activo en el target
+                        local hasPrompt = false
+                        for _, child in ipairs(targetChar:GetDescendants()) do
+                            if child:IsA("ProximityPrompt") and child.Enabled then
+                                hasPrompt = true
+                                break
+                            end
+                        end
+                        
+                        if hasPrompt then
+                            sendCompleteHeal(targetChar)
+                        end
+                    end
+                end
+            end
+        end
+    end
 end
 
 -- Configurar sistema
@@ -1427,34 +1487,29 @@ local function setupInstaHealSystem()
         healConnection = nil
     end
     
-    setupViolenceDistrictRemotes()
-    interceptHealEvent()
-    interceptHealingPrompts()
+    -- Encontrar remotes
+    findHealingRemotes()
     
-    -- Loop simple sin auto-funciones
+    -- Configurar detecciones
+    setupInteractionDetection()
+    setupAttributeDetection()
+    
+    -- Iniciar monitor de proximidad
     healConnection = RunService.Heartbeat:Connect(function()
-        -- Solo mantener conexión, sin funcionalidad extra
+        monitorNearbySurvivors()
     end)
 end
 
--- Limpiar sistema
+-- Limpiar
 local function cleanupInstaHealSystem()
     if healConnection then
         healConnection:Disconnect()
         healConnection = nil
     end
     
-    if healRemotes.HealEvent and originalFunctions[healRemotes.HealEvent] then
-        healRemotes.HealEvent.FireServer = originalFunctions[healRemotes.HealEvent]
-    end
-    
-    for prompt, connections in pairs(originalFunctions) do
-        if prompt:IsA("ProximityPrompt") and connections.triggered then
-            connections.triggered:Disconnect()
-        end
-    end
-    
-    originalFunctions = {}
+    HealEvent = nil
+    HealAnim = nil
+    lastInteractionTime = 0
 end
 
 SurvivorTab:CreateSection("Insta Heal")
@@ -1466,15 +1521,9 @@ SurvivorTab:CreateToggle({
         instaHealEnabled = v
         
         if v then
-            local success, err = pcall(function()
+            pcall(function()
                 setupInstaHealSystem()
             end)
-            
-            if not success then
-                instaHealEnabled = false
-                return
-            end
-            
         else
             pcall(function()
                 cleanupInstaHealSystem()

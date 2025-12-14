@@ -1725,7 +1725,6 @@ SurvivorTab:CreateToggle({
         end
     end
 })
-
 -- ============================================
 -- SISTEMA MOONWALK MODE
 -- ============================================
@@ -1733,8 +1732,10 @@ SurvivorTab:CreateToggle({
 SurvivorTab:CreateSection("Moonwalk Mode")
 
 local moonwalkEnabled = false
+local moonwalkActive = false
 local moonwalkConnection = nil
 local moonwalkInputConnections = {}
+local UIS = game:GetService("UserInputService")
 
 local maxTurn = 30
 local turnSpeed = 350
@@ -1744,9 +1745,8 @@ local currentYaw = 0
 local turningLeft = false
 local turningRight = false
 
-local moonwalkButtonsGui = nil
-local rButton = nil
-local lButton = nil
+local moonwalkButtonGui = nil
+local moonwalkButton = nil
 
 local function getYaw(cf)
     local _, y, _ = cf:ToEulerAnglesYXZ()
@@ -1758,104 +1758,99 @@ local function setYaw(cf, yaw)
     return CFrame.new(pos) * CFrame.Angles(0, math.rad(yaw), 0)
 end
 
-local function createMoonwalkButtons()
-    if moonwalkButtonsGui and moonwalkButtonsGui.Parent then
-        moonwalkButtonsGui:Destroy()
+local function createMoonwalkButton()
+    if moonwalkButtonGui and moonwalkButtonGui.Parent then
+        moonwalkButtonGui:Destroy()
     end
     
     local PlayerGui = LP:WaitForChild("PlayerGui")
     
-    moonwalkButtonsGui = Instance.new("ScreenGui")
-    moonwalkButtonsGui.Name = "MoonwalkButtons"
-    moonwalkButtonsGui.ResetOnSpawn = false
-    moonwalkButtonsGui.IgnoreGuiInset = true
-    moonwalkButtonsGui.Enabled = false
-    moonwalkButtonsGui.Parent = PlayerGui
+    moonwalkButtonGui = Instance.new("ScreenGui")
+    moonwalkButtonGui.Name = "MoonwalkButtonGui"
+    moonwalkButtonGui.ResetOnSpawn = false
+    moonwalkButtonGui.IgnoreGuiInset = true
+    moonwalkButtonGui.Enabled = false
+    moonwalkButtonGui.Parent = PlayerGui
     
-    rButton = Instance.new("TextButton")
-    rButton.Name = "R_Button"
-    rButton.Size = UDim2.new(0, 50, 0, 50)
-    rButton.Position = UDim2.new(1, -120, 0.5, -25)
-    rButton.BackgroundColor3 = Color3.fromRGB(35, 35, 35)
-    rButton.TextColor3 = Color3.new(1, 1, 1)
-    rButton.Text = "R"
-    rButton.TextSize = 18
-    rButton.Font = Enum.Font.GothamBold
-    rButton.BorderSizePixel = 0
-    rButton.AutoButtonColor = false
-    rButton.Visible = false
-    rButton.Parent = moonwalkButtonsGui
+    moonwalkButton = Instance.new("TextButton")
+    moonwalkButton.Name = "MoonwalkButton"
+    moonwalkButton.Size = UDim2.new(0, 80, 0, 80)
+    moonwalkButton.Position = UDim2.new(1, -100, 0.5, -40)
+    moonwalkButton.BackgroundColor3 = Color3.fromRGB(45, 45, 45)
+    moonwalkButton.TextColor3 = Color3.new(1, 1, 1)
+    moonwalkButton.Text = "M"  -- "M" de Moonwalk
+    moonwalkButton.TextSize = 24
+    moonwalkButton.Font = Enum.Font.GothamBold
+    moonwalkButton.BorderSizePixel = 2
+    moonwalkButton.BorderColor3 = Color3.fromRGB(100, 100, 100)
+    moonwalkButton.AutoButtonColor = false
+    moonwalkButton.Visible = false
+    moonwalkButton.Parent = moonwalkButtonGui
     
-    lButton = Instance.new("TextButton")
-    lButton.Name = "L_Button"
-    lButton.Size = UDim2.new(0, 50, 0, 50)
-    lButton.Position = UDim2.new(0, 20, 0.5, -25)
-    lButton.BackgroundColor3 = Color3.fromRGB(35, 35, 35)
-    lButton.TextColor3 = Color3.new(1, 1, 1)
-    lButton.Text = "L"
-    lButton.TextSize = 18
-    lButton.Font = Enum.Font.GothamBold
-    lButton.BorderSizePixel = 0
-    lButton.AutoButtonColor = false
-    lButton.Visible = false
-    lButton.Parent = moonwalkButtonsGui
-    
-    -- Eventos para el botón R
-    rButton.MouseButton1Down:Connect(function()
-        rButton.BackgroundColor3 = Color3.fromRGB(0, 120, 200)
-        turningRight = true
+    local isButtonPressed = false
+    local function updateButtonAppearance()
+        if isButtonPressed then
+            moonwalkButton.BackgroundColor3 = Color3.fromRGB(0, 120, 200)
+            moonwalkButton.BorderColor3 = Color3.fromRGB(0, 170, 255)
+            moonwalkButton.Text = "ON"
+        else
+            moonwalkButton.BackgroundColor3 = Color3.fromRGB(45, 45, 45)
+            moonwalkButton.BorderColor3 = Color3.fromRGB(100, 100, 100)
+            moonwalkButton.Text = "M"
+        end
+    end
+    moonwalkButton.MouseButton1Down:Connect(function()
+        isButtonPressed = true
+        moonwalkActive = true
+        updateButtonAppearance()
+        
+        -- Inicializar rotación
+        local char = LP.Character
+        if char then
+            local root = char:FindFirstChild("HumanoidRootPart")
+            if root then
+                baseYaw = getYaw(root.CFrame)
+                currentYaw = baseYaw
+            end
+        end
     end)
     
-    rButton.MouseButton1Up:Connect(function()
-        rButton.BackgroundColor3 = Color3.fromRGB(35, 35, 35)
-        turningRight = false
-    end)
-    
-    rButton.MouseLeave:Connect(function()
-        rButton.BackgroundColor3 = Color3.fromRGB(35, 35, 35)
-        turningRight = false
-    end)
-    
-    -- Eventos para el botón L
-    lButton.MouseButton1Down:Connect(function()
-        lButton.BackgroundColor3 = Color3.fromRGB(0, 120, 200)
-        turningLeft = true
-    end)
-    
-    lButton.MouseButton1Up:Connect(function()
-        lButton.BackgroundColor3 = Color3.fromRGB(35, 35, 35)
+    moonwalkButton.MouseButton1Up:Connect(function()
+        isButtonPressed = false
+        moonwalkActive = false
         turningLeft = false
+        turningRight = false
+        updateButtonAppearance()
     end)
     
-    lButton.MouseLeave:Connect(function()
-        lButton.BackgroundColor3 = Color3.fromRGB(35, 35, 35)
+    moonwalkButton.MouseLeave:Connect(function()
+        isButtonPressed = false
+        moonwalkActive = false
         turningLeft = false
+        turningRight = false
+        updateButtonAppearance()
     end)
     
-    return moonwalkButtonsGui
+    return moonwalkButtonGui
 end
 
-local function setButtonsVisibility(visible)
-    if not moonwalkButtonsGui or not moonwalkButtonsGui.Parent then
-        createMoonwalkButtons()
+local function setButtonVisibility(visible)
+    if not moonwalkButtonGui or not moonwalkButtonGui.Parent then
+        createMoonwalkButton()
     end
     
-    moonwalkButtonsGui.Enabled = visible
+    moonwalkButtonGui.Enabled = visible
     
-    if rButton then
-        rButton.Visible = visible
-    end
-    
-    if lButton then
-        lButton.Visible = visible
+    if moonwalkButton then
+        moonwalkButton.Visible = visible
     end
     
     if not visible then
-        if rButton then
-            rButton.BackgroundColor3 = Color3.fromRGB(35, 35, 35)
-        end
-        if lButton then
-            lButton.BackgroundColor3 = Color3.fromRGB(35, 35, 35)
+        moonwalkActive = false
+        if moonwalkButton then
+            moonwalkButton.BackgroundColor3 = Color3.fromRGB(45, 45, 45)
+            moonwalkButton.BorderColor3 = Color3.fromRGB(100, 100, 100)
+            moonwalkButton.Text = "M"
         end
     end
 end
@@ -1881,11 +1876,12 @@ local function cleanupMoonwalk()
         end
     end
     
+    moonwalkActive = false
     turningLeft = false
     turningRight = false
     currentYaw = 0
     
-    setButtonsVisibility(false)
+    setButtonVisibility(false)
 end
 
 local function startMoonwalk()
@@ -1897,31 +1893,28 @@ local function startMoonwalk()
     end
     
     local humanoid = char:FindFirstChildOfClass("Humanoid")
-    local root = char:FindFirstChild("HumanoidRootPart")
-    
-    if not (humanoid and root) then 
+    if not humanoid then 
         return 
     end
-    
+
     humanoid.AutoRotate = false
     
-    baseYaw = getYaw(root.CFrame)
-    currentYaw = baseYaw
-    
-    setButtonsVisibility(true)
-    
+    setButtonVisibility(true)
     moonwalkInputConnections.inputBegan = UIS.InputBegan:Connect(function(input)
-        if not moonwalkEnabled then return end
+        if not moonwalkActive then return end 
         
+        -- Detectar movimiento del joystick/teclado
         if input.KeyCode == Enum.KeyCode.A or input.KeyCode == Enum.KeyCode.Left then
             turningLeft = true
+            turningRight = false
         elseif input.KeyCode == Enum.KeyCode.D or input.KeyCode == Enum.KeyCode.Right then
             turningRight = true
+            turningLeft = false
         end
     end)
     
     moonwalkInputConnections.inputEnded = UIS.InputEnded:Connect(function(input)
-        if not moonwalkEnabled then return end
+        if not moonwalkActive then return end
         
         if input.KeyCode == Enum.KeyCode.A or input.KeyCode == Enum.KeyCode.Left then
             turningLeft = false
@@ -1929,7 +1922,28 @@ local function startMoonwalk()
             turningRight = false
         end
     end)
-    
+
+    moonwalkInputConnections.gamepadInput = UIS.InputChanged:Connect(function(input)
+        if not moonwalkActive then return end
+        
+        if input.KeyCode == Enum.KeyCode.Thumbstick1 then
+            local stickPosition = input.Position
+            local x = stickPosition.X
+            
+            if x < -0.3 then
+                turningLeft = true
+                turningRight = false
+
+            elseif x > 0.3 then
+                turningRight = true
+                turningLeft = false
+            else
+                turningLeft = false
+                turningRight = false
+            end
+        end
+    end)
+
     moonwalkConnection = RunService.RenderStepped:Connect(function(dt)
         local currentChar = LP.Character
         if not currentChar then return end
@@ -1937,31 +1951,40 @@ local function startMoonwalk()
         local currentRoot = currentChar:FindFirstChild("HumanoidRootPart")
         if not currentRoot then return end
         
-        if turningLeft then
-            currentYaw = currentYaw + turnSpeed * dt
-            if currentYaw > baseYaw + maxTurn then
-                currentYaw = baseYaw + maxTurn
+        local currentHumanoid = currentChar:FindFirstChildOfClass("Humanoid")
+        if not currentHumanoid then return end
+        if moonwalkActive then
+            currentHumanoid.AutoRotate = false
+            if turningLeft then
+                currentYaw = currentYaw + turnSpeed * dt
+                if currentYaw > baseYaw + maxTurn then
+                    currentYaw = baseYaw + maxTurn
+                end
+            elseif turningRight then
+                currentYaw = currentYaw - turnSpeed * dt
+                if currentYaw < baseYaw - maxTurn then
+                    currentYaw = baseYaw - maxTurn
+                end
+            else
+                if currentYaw > baseYaw then
+                    currentYaw = currentYaw - returnSpeed * dt
+                    if currentYaw < baseYaw then 
+                        currentYaw = baseYaw 
+                    end
+                elseif currentYaw < baseYaw then
+                    currentYaw = currentYaw + returnSpeed * dt
+                    if currentYaw > baseYaw then 
+                        currentYaw = baseYaw 
+                    end
+                end
             end
-        elseif turningRight then
-            currentYaw = currentYaw - turnSpeed * dt
-            if currentYaw < baseYaw - maxTurn then
-                currentYaw = baseYaw - maxTurn
-            end
+            
+            currentRoot.CFrame = setYaw(currentRoot.CFrame, currentYaw)
         else
-            if currentYaw > baseYaw then
-                currentYaw = currentYaw - returnSpeed * dt
-                if currentYaw < baseYaw then 
-                    currentYaw = baseYaw 
-                end
-            elseif currentYaw < baseYaw then
-                currentYaw = currentYaw + returnSpeed * dt
-                if currentYaw > baseYaw then 
-                    currentYaw = baseYaw 
-                end
-            end
+            currentHumanoid.AutoRotate = true
+            turningLeft = false
+            turningRight = false
         end
-        
-        currentRoot.CFrame = setYaw(currentRoot.CFrame, currentYaw)
     end)
 end
 
@@ -1973,7 +1996,7 @@ local function handleCharacterRespawn()
 end
 
 SurvivorTab:CreateToggle({
-    Name = "Moonwalk Mode (Botones R/L)",
+    Name = "Moonwalk Mode",
     CurrentValue = false,
     Flag = "MoonwalkToggle",
     Callback = function(enabled)
@@ -1981,6 +2004,8 @@ SurvivorTab:CreateToggle({
         
         if enabled then
             startMoonwalk()
+            
+            -- Reiniciar cuando respawneas
             LP.CharacterAdded:Connect(handleCharacterRespawn)
         else
             cleanupMoonwalk()
@@ -1990,7 +2015,7 @@ SurvivorTab:CreateToggle({
 
 task.spawn(function()
     task.wait(2)
-    createMoonwalkButtons()
+    createMoonwalkButton()
 end)
 
 -- ============================================

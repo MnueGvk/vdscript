@@ -10,7 +10,7 @@ local Lighting = game:GetService("Lighting")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local StarterGui = game:GetService("StarterGui")
 local LP = Players.LocalPlayer
-local UIS = ("UserInputService")
+local UIS = game:GetService("UserInputService")
 
 -- ============================================
 -- 2. FUNCIONES UTILITARIAS
@@ -1735,7 +1735,6 @@ SurvivorTab:CreateSection("Moonwalk Mode")
 local moonwalkEnabled = false
 local moonwalkConnection = nil
 local moonwalkInputConnections = {}
-local UIS = game:GetService("UserInputService")
 
 local maxTurn = 30
 local turnSpeed = 350
@@ -1760,12 +1759,11 @@ local function setYaw(cf, yaw)
 end
 
 local function createMoonwalkButtons()
-    if moonwalkButtonsGui then
+    if moonwalkButtonsGui and moonwalkButtonsGui.Parent then
         moonwalkButtonsGui:Destroy()
     end
     
-    local PlayerGui = LP:FindFirstChild("PlayerGui")
-    if not PlayerGui then return end
+    local PlayerGui = LP:WaitForChild("PlayerGui")
     
     moonwalkButtonsGui = Instance.new("ScreenGui")
     moonwalkButtonsGui.Name = "MoonwalkButtons"
@@ -1802,6 +1800,7 @@ local function createMoonwalkButtons()
     lButton.Visible = false
     lButton.Parent = moonwalkButtonsGui
     
+    -- Eventos para el botón R
     rButton.MouseButton1Down:Connect(function()
         rButton.BackgroundColor3 = Color3.fromRGB(0, 120, 200)
         turningRight = true
@@ -1817,6 +1816,7 @@ local function createMoonwalkButtons()
         turningRight = false
     end)
     
+    -- Eventos para el botón L
     lButton.MouseButton1Down:Connect(function()
         lButton.BackgroundColor3 = Color3.fromRGB(0, 120, 200)
         turningLeft = true
@@ -1836,7 +1836,7 @@ local function createMoonwalkButtons()
 end
 
 local function setButtonsVisibility(visible)
-    if not moonwalkButtonsGui then
+    if not moonwalkButtonsGui or not moonwalkButtonsGui.Parent then
         createMoonwalkButtons()
     end
     
@@ -1892,20 +1892,28 @@ local function startMoonwalk()
     cleanupMoonwalk()
     
     local char = LP.Character
-    if not char then return end
+    if not char then 
+        return 
+    end
     
     local humanoid = char:FindFirstChildOfClass("Humanoid")
     local root = char:FindFirstChild("HumanoidRootPart")
     
-    if not (humanoid and root) then return end
+    if not (humanoid and root) then 
+        return 
+    end
     
+    -- Desactivar rotación automática
     humanoid.AutoRotate = false
     
+    -- Establecer baseYaw
     baseYaw = getYaw(root.CFrame)
     currentYaw = baseYaw
     
+    -- Mostrar botones
     setButtonsVisibility(true)
     
+    -- Conexión para teclado (opcional)
     moonwalkInputConnections.inputBegan = UIS.InputBegan:Connect(function(input)
         if not moonwalkEnabled then return end
         
@@ -1926,6 +1934,7 @@ local function startMoonwalk()
         end
     end)
     
+    -- Loop principal del moonwalk
     moonwalkConnection = RunService.RenderStepped:Connect(function(dt)
         local currentChar = LP.Character
         if not currentChar then return end
@@ -1961,6 +1970,13 @@ local function startMoonwalk()
     end)
 end
 
+local function handleCharacterRespawn()
+    if moonwalkEnabled then
+        task.wait(0.5)
+        startMoonwalk()
+    end
+end
+
 SurvivorTab:CreateToggle({
     Name = "Moonwalk Mode (Botones R/L)",
     CurrentValue = false,
@@ -1970,18 +1986,17 @@ SurvivorTab:CreateToggle({
         
         if enabled then
             startMoonwalk()
-            
-            LP.CharacterAdded:Connect(function()
-                if moonwalkEnabled then
-                    task.wait(0.5)
-                    startMoonwalk()
-                end
-            end)
+            LP.CharacterAdded:Connect(handleCharacterRespawn)
         else
             cleanupMoonwalk()
         end
     end
 })
+
+task.spawn(function()
+    task.wait(2)
+    createMoonwalkButtons()
+end)
 
 -- ============================================
 -- SISTEMA ANTI-EFECTOS (KILLER TAB)

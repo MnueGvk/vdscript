@@ -1903,17 +1903,13 @@ local function startMoonwalk()
         return 
     end
     
-    -- Desactivar rotación automática
     humanoid.AutoRotate = false
     
-    -- Establecer baseYaw
     baseYaw = getYaw(root.CFrame)
     currentYaw = baseYaw
     
-    -- Mostrar botones
     setButtonsVisibility(true)
     
-    -- Conexión para teclado (opcional)
     moonwalkInputConnections.inputBegan = UIS.InputBegan:Connect(function(input)
         if not moonwalkEnabled then return end
         
@@ -1934,7 +1930,6 @@ local function startMoonwalk()
         end
     end)
     
-    -- Loop principal del moonwalk
     moonwalkConnection = RunService.RenderStepped:Connect(function(dt)
         local currentChar = LP.Character
         if not currentChar then return end

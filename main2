@@ -2044,7 +2044,7 @@ local function calculateTargetBodyRotation()
     end
     
     -- Con input: calcular desviación desde base
-    local deviationAngle = joystickX * MAX_DEVIATION  # -30° a +30°
+    local deviationAngle = joystickX * MAX_DEVIATION
     local targetYaw = baseDirection + deviationAngle
     
     return normalizeAngle(targetYaw)

@@ -1893,20 +1893,12 @@ SurvivorTab:CreateToggle({
     Name = "Moonwalk",
     CurrentValue = false,
     Callback = function(v)
-        moonwalkEnabled = v
+        systemEnabled = v
+        gui.Enabled = v
 
-        if v then
-            setupMoonwalk()
-
-            LP.CharacterAdded:Connect(function()
-                task.wait(1)
-                if moonwalkEnabled then
-                    setupMoonwalk()
-                end
-            end)
-
-        else
-            cleanupMoonwalk()
+        if not v then
+            -- apagar moonwalk si estaba activo
+            disableMoonwalk()
         end
     end
 })

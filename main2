@@ -10,6 +10,7 @@ local Lighting = game:GetService("Lighting")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local StarterGui = game:GetService("StarterGui")
 local LP = Players.LocalPlayer
+local Camera = workspace.CurrentCamera
 
 -- ============================================
 -- 2. FUNCIONES UTILITARIAS
@@ -1727,146 +1728,170 @@ SurvivorTab:CreateToggle({
 
 
 -- ============================================
--- MOONWALK
+-- MOONWALK SYSTEM (STABLE + CAMERA FIX)
 -- ============================================
 
-SurvivorTab:CreateSection("Moonwalk")
+-- Variables de estado
+local moonwalkEnabled = false
+local holdingMoonwalk = false
+local moveForward = true -- true = adelante | false = atrás
 
-local char, humanoid, root
+local maxTurn = 30
+local turnSpeed = 250
+local returnSpeed = 200
 
-local systemEnabled = false
-local moonwalk = false
-local facingMode = "Backward"
+local turningLeft = false
+local turningRight = false
 
+local character, humanoid, root
 local baseYaw = 0
 local currentYaw = 0
-local maxTurn = 30
-local returnSpeed = 0.25
+
+-- ============================================
+-- FUNCIONES UTILITARIAS
+-- ============================================
+
+local function getYaw(cf)
+    local _, y, _ = cf:ToEulerAnglesYXZ()
+    return math.deg(y)
+end
+
+local function setYaw(cf, yaw)
+    return CFrame.new(cf.Position) * CFrame.Angles(0, math.rad(yaw), 0)
+end
+
+local function setupCharacter(char)
+    character = char
+    humanoid = char:WaitForChild("Humanoid")
+    root = char:WaitForChild("HumanoidRootPart")
+
+    humanoid.AutoRotate = not moonwalkEnabled
+    baseYaw = getYaw(root.CFrame)
+    currentYaw = baseYaw
+end
+
+LP.CharacterAdded:Connect(setupCharacter)
+if LP.Character then
+    setupCharacter(LP.Character)
+end
+
+-- ============================================
+-- GUI
+-- ============================================
 
 local gui = Instance.new("ScreenGui")
 gui.Name = "MoonwalkGUI"
-gui.IgnoreGuiInset = true
 gui.ResetOnSpawn = false
-gui.Enabled = false
 gui.Parent = LP:WaitForChild("PlayerGui")
 
-local mwButton = Instance.new("TextButton")
-mwButton.Size = UDim2.new(0, 52, 0, 52)
-mwButton.Position = UDim2.new(1, -55, 1, -140)
-mwButton.BackgroundColor3 = Color3.fromRGB(35,35,35)
-mwButton.Text = "MW"
-mwButton.TextScaled = true
-mwButton.TextColor3 = Color3.new(1,1,1)
-mwButton.BorderSizePixel = 0
-mwButton.Parent = gui
+-- Botón Moonwalk (mantener)
+local moonBtn = Instance.new("TextButton")
+moonBtn.Size = UDim2.new(0, 48, 0, 48)
+moonBtn.Position = UDim2.new(1, -70, 1, -160)
+moonBtn.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
+moonBtn.Text = "MW"
+moonBtn.TextColor3 = Color3.new(1,1,1)
+moonBtn.TextScaled = true
+moonBtn.BorderSizePixel = 0
+moonBtn.Parent = gui
 
-local dirButton = Instance.new("TextButton")
-dirButton.Size = UDim2.new(0, 52, 0, 30)
-dirButton.Position = UDim2.new(1, -55, 1, -85)
-dirButton.BackgroundColor3 = Color3.fromRGB(60,60,60)
-dirButton.Text = "↓"
-dirButton.TextScaled = true
-dirButton.TextColor3 = Color3.new(1,1,1)
-dirButton.BorderSizePixel = 0
-dirButton.Parent = gui
+-- Botón dirección (toggle)
+local dirBtn = Instance.new("TextButton")
+dirBtn.Size = UDim2.new(0, 48, 0, 48)
+dirBtn.Position = UDim2.new(1, -70, 1, -105)
+dirBtn.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
+dirBtn.Text = "⬇"
+dirBtn.TextColor3 = Color3.new(1,1,1)
+dirBtn.TextScaled = true
+dirBtn.BorderSizePixel = 0
+dirBtn.Parent = gui
 
-local function getYaw(cf)
-	local _, y, _ = cf:ToEulerAnglesYXZ()
-	return math.deg(y)
-end
-
-local function bindCharacter(character)
-	char = character
-	humanoid = char:WaitForChild("Humanoid")
-	root = char:WaitForChild("HumanoidRootPart")
-
-	moonwalk = false
-	humanoid.AutoRotate = true
-	mwButton.BackgroundColor3 = Color3.fromRGB(35,35,35)
-end
-
-LP.CharacterAdded:Connect(bindCharacter)
-if LP.Character then
-	bindCharacter(LP.Character)
-end
-
-local function enableMoonwalk()
-	if not systemEnabled or not humanoid or not root then return end
-
-	moonwalk = true
-	humanoid.AutoRotate = false
-
-	local yaw = getYaw(root.CFrame)
-	if facingMode == "Backward" then
-		yaw = yaw + 180
-	end
-
-	baseYaw = yaw
-	currentYaw = baseYaw
-	mwButton.BackgroundColor3 = Color3.fromRGB(0,170,255)
-end
-
-local function disableMoonwalk()
-	moonwalk = false
-	if humanoid then
-		humanoid.AutoRotate = true
-	end
-	mwButton.BackgroundColor3 = Color3.fromRGB(35,35,35)
-end
-
-mwButton.MouseButton1Down:Connect(enableMoonwalk)
-mwButton.MouseButton1Up:Connect(disableMoonwalk)
-mwButton.MouseLeave:Connect(disableMoonwalk)
-
-dirButton.MouseButton1Click:Connect(function()
-	if facingMode == "Backward" then
-		facingMode = "Forward"
-		dirButton.Text = "↑"
-	else
-		facingMode = "Backward"
-		dirButton.Text = "↓"
-	end
+-- Toggle dirección
+dirBtn.MouseButton1Click:Connect(function()
+    moveForward = not moveForward
+    dirBtn.Text = moveForward and "⬇" or "⬆"
 end)
 
-RunService.RenderStepped:Connect(function()
-	if not systemEnabled or not moonwalk or not humanoid or not root then return end
+-- Mantener Moonwalk
+moonBtn.MouseButton1Down:Connect(function()
+    moonwalkEnabled = true
+    holdingMoonwalk = true
+    moonBtn.BackgroundColor3 = Color3.fromRGB(0,170,255)
 
-	local moveDir = humanoid.MoveDirection
-
-	if moveDir.Magnitude < 0.05 then
-		currentYaw = currentYaw + (baseYaw - currentYaw) * returnSpeed
-	else
-		local cam = workspace.CurrentCamera
-
-		local camForward = Vector3.new(
-			cam.CFrame.LookVector.X, 0, cam.CFrame.LookVector.Z
-		).Unit
-
-		local camRight = Vector3.new(
-			cam.CFrame.RightVector.X, 0, cam.CFrame.RightVector.Z
-		).Unit
-
-		local forwardDot = camForward:Dot(moveDir)
-		local rightDot = camRight:Dot(moveDir)
-
-		local angle = math.deg(math.atan2(rightDot, forwardDot))
-		angle = math.clamp(angle, -maxTurn, maxTurn)
-
-		currentYaw = baseYaw + angle
-	end
-
-	root.CFrame =
-		CFrame.new(root.Position) *
-		CFrame.Angles(0, math.rad(currentYaw), 0)
+    if humanoid then
+        humanoid.AutoRotate = false
+        baseYaw = getYaw(root.CFrame)
+        currentYaw = baseYaw
+    end
 end)
 
-SurvivorTab:CreateToggle("Moonwalk", function(state)
-	systemEnabled = state
-	gui.Enabled = state
+moonBtn.MouseButton1Up:Connect(function()
+    holdingMoonwalk = false
+    moonwalkEnabled = false
+    moonBtn.BackgroundColor3 = Color3.fromRGB(40,40,40)
 
-	if not state then
-		disableMoonwalk()
-	end
+    if humanoid then
+        humanoid.AutoRotate = true
+    end
+end)
+
+-- ============================================
+-- INPUT GIRO
+-- ============================================
+
+UIS.InputBegan:Connect(function(input)
+    if not moonwalkEnabled then return end
+
+    if input.KeyCode == Enum.KeyCode.A or input.KeyCode == Enum.KeyCode.Left then
+        turningLeft = true
+    elseif input.KeyCode == Enum.KeyCode.D or input.KeyCode == Enum.KeyCode.Right then
+        turningRight = true
+    end
+end)
+
+UIS.InputEnded:Connect(function(input)
+    if input.KeyCode == Enum.KeyCode.A or input.KeyCode == Enum.KeyCode.Left then
+        turningLeft = false
+    elseif input.KeyCode == Enum.KeyCode.D or input.KeyCode == Enum.KeyCode.Right then
+        turningRight = false
+    end
+end)
+
+-- ============================================
+-- LOOP PRINCIPAL
+-- ============================================
+
+RunService.RenderStepped:Connect(function(dt)
+    if not moonwalkEnabled or not root or not humanoid then
+        return
+    end
+
+    -- Giro limitado
+    if turningLeft then
+        currentYaw = currentYaw - turnSpeed * dt
+    elseif turningRight then
+        currentYaw = currentYaw + turnSpeed * dt
+    else
+        if currentYaw > baseYaw then
+            currentYaw = currentYaw - returnSpeed * dt
+        elseif currentYaw < baseYaw then
+            currentYaw = currentYaw + returnSpeed * dt
+        end
+    end
+
+    currentYaw = math.clamp(
+        currentYaw,
+        baseYaw - maxTurn,
+        baseYaw + maxTurn
+    )
+
+    root.CFrame = setYaw(root.CFrame, currentYaw)
+
+    -- Movimiento forzado (adelante / atrás)
+    humanoid:Move(
+        (moveForward and root.CFrame.LookVector or -root.CFrame.LookVector),
+        true
+    )
 end)
 
 -- ============================================

@@ -10,7 +10,6 @@ local Lighting = game:GetService("Lighting")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local StarterGui = game:GetService("StarterGui")
 local LP = Players.LocalPlayer
-local UIS = game:GetService("UserInputService")
 
 -- ============================================
 -- 2. FUNCIONES UTILITARIAS
@@ -1726,436 +1725,148 @@ SurvivorTab:CreateToggle({
     end
 })
 
+
 -- ============================================
--- MOONWALK MODE - CUERPO SE MUEVE ±30° PERO MIRA BASE
+-- MOONWALK
 -- ============================================
 
-SurvivorTab:CreateSection("Moonwalk Mode")
+SurvivorTab:CreateSection("Moonwalk")
 
-local moonwalkEnabled = false
-local moonwalkActive = false
-local moonwalkConnection = nil
-local UIS = game:GetService("UserInputService")
+local char, humanoid, root
 
--- Variables del moonwalk
-local MAX_DEVIATION = 30 -- Límite de 30 grados para movimiento del cuerpo
-local TURN_SPEED = 320 -- Velocidad de giro del cuerpo
-local RETURN_SPEED = 220 -- Velocidad de retorno a base
-local SMOOTH_FACTOR = 8 -- Suavizado de rotación
+local systemEnabled = false
+local moonwalk = false
+local facingMode = "Backward"
 
--- Estados
-local baseDirection = 0 -- DIRECCIÓN BASE del moonwalk (adelante=0°, atrás=180°)
-local currentBodyYaw = 0 -- Rotación ACTUAL del cuerpo (puede desviarse ±30°)
-local targetBodyYaw = 0 -- Objetivo de rotación del cuerpo
-local isMoonwalkForward = true -- true=adelante, false=atrás
+local baseYaw = 0
+local currentYaw = 0
+local maxTurn = 30
+local returnSpeed = 0.25
 
--- Control de inputs
-local joystickX = 0 -- Valor del joystick (-1 a 1)
-local isManualDeviation = false -- Si el usuario está desviando manualmente
+local gui = Instance.new("ScreenGui")
+gui.Name = "MoonwalkGUI"
+gui.IgnoreGuiInset = true
+gui.ResetOnSpawn = false
+gui.Enabled = false
+gui.Parent = LP:WaitForChild("PlayerGui")
 
--- GUI
-local moonwalkGui = nil
-local moonwalkButton = nil
-local directionButton = nil -- Botón para cambiar adelante/atrás
+local mwButton = Instance.new("TextButton")
+mwButton.Size = UDim2.new(0, 52, 0, 52)
+mwButton.Position = UDim2.new(1, -55, 1, -140)
+mwButton.BackgroundColor3 = Color3.fromRGB(35,35,35)
+mwButton.Text = "MW"
+mwButton.TextScaled = true
+mwButton.TextColor3 = Color3.new(1,1,1)
+mwButton.BorderSizePixel = 0
+mwButton.Parent = gui
 
--- Función para obtener ángulo Yaw normalizado (-180 a 180)
-local function getNormalizedYaw(cf)
-    local _, y, _ = cf:ToEulerAnglesYXZ()
-    local degrees = math.deg(y)
-    -- Normalizar a -180..180
-    while degrees > 180 do degrees = degrees - 360 end
-    while degrees < -180 do degrees = degrees + 360 end
-    return degrees
+local dirButton = Instance.new("TextButton")
+dirButton.Size = UDim2.new(0, 52, 0, 30)
+dirButton.Position = UDim2.new(1, -55, 1, -85)
+dirButton.BackgroundColor3 = Color3.fromRGB(60,60,60)
+dirButton.Text = "↓"
+dirButton.TextScaled = true
+dirButton.TextColor3 = Color3.new(1,1,1)
+dirButton.BorderSizePixel = 0
+dirButton.Parent = gui
+
+local function getYaw(cf)
+	local _, y, _ = cf:ToEulerAnglesYXZ()
+	return math.deg(y)
 end
 
--- Normalizar ángulo a -180..180
-local function normalizeAngle(angle)
-    while angle > 180 do angle = angle - 360 end
-    while angle < -180 do angle = angle + 360 end
-    return angle
+local function bindCharacter(character)
+	char = character
+	humanoid = char:WaitForChild("Humanoid")
+	root = char:WaitForChild("HumanoidRootPart")
+
+	moonwalk = false
+	humanoid.AutoRotate = true
+	mwButton.BackgroundColor3 = Color3.fromRGB(35,35,35)
 end
 
--- Calcular diferencia de ángulo más corta
-local function shortestAngleDifference(from, to)
-    local diff = to - from
-    if diff > 180 then diff = diff - 360
-    elseif diff < -180 then diff = diff + 360 end
-    return diff
+LP.CharacterAdded:Connect(bindCharacter)
+if LP.Character then
+	bindCharacter(LP.Character)
 end
 
--- Interpolación angular suavizada
-local function smoothAngleLerp(current, target, alpha)
-    local diff = shortestAngleDifference(current, target)
-    return current + diff * math.min(alpha, 1)
+local function enableMoonwalk()
+	if not systemEnabled or not humanoid or not root then return end
+
+	moonwalk = true
+	humanoid.AutoRotate = false
+
+	local yaw = getYaw(root.CFrame)
+	if facingMode == "Backward" then
+		yaw = yaw + 180
+	end
+
+	baseYaw = yaw
+	currentYaw = baseYaw
+	mwButton.BackgroundColor3 = Color3.fromRGB(0,170,255)
 end
 
--- Crear interfaz de moonwalk
-local function createMoonwalkUI()
-    if moonwalkGui and moonwalkGui.Parent then
-        moonwalkGui:Destroy()
-    end
-    
-    local PlayerGui = LP:WaitForChild("PlayerGui")
-    
-    moonwalkGui = Instance.new("ScreenGui")
-    moonwalkGui.Name = "MoonwalkGUI"
-    moonwalkGui.ResetOnSpawn = false
-    moonwalkGui.IgnoreGuiInset = true
-    moonwalkGui.Enabled = false
-    moonwalkGui.Parent = PlayerGui
-    
-    -- Contenedor principal
-    local container = Instance.new("Frame")
-    container.Name = "MoonwalkContainer"
-    container.Size = UDim2.new(0, 160, 0, 120)
-    container.Position = UDim2.new(1, -170, 1, -130)
-    container.BackgroundTransparency = 1
-    container.Parent = moonwalkGui
-    
-    -- Botón principal de moonwalk
-    moonwalkButton = Instance.new("TextButton")
-    moonwalkButton.Name = "MoonwalkToggleBtn"
-    moonwalkButton.Size = UDim2.new(0, 70, 0, 70)
-    moonwalkButton.Position = UDim2.new(0.5, -35, 0, 0)
-    moonwalkButton.BackgroundColor3 = Color3.fromRGB(45, 45, 45)
-    moonwalkButton.TextColor3 = Color3.new(1, 1, 1)
-    moonwalkButton.Text = "MW"
-    moonwalkButton.TextSize = 22
-    moonwalkButton.Font = Enum.Font.GothamBold
-    moonwalkButton.BorderSizePixel = 2
-    moonwalkButton.BorderColor3 = Color3.fromRGB(80, 80, 80)
-    moonwalkButton.AutoButtonColor = false
-    moonwalkButton.Visible = false
-    moonwalkButton.ZIndex = 10
-    moonwalkButton.Parent = container
-    
-    -- Botón para cambiar dirección adelante/atrás
-    directionButton = Instance.new("TextButton")
-    directionButton.Name = "DirectionToggleBtn"
-    directionButton.Size = UDim2.new(0, 60, 0, 30)
-    directionButton.Position = UDim2.new(0.5, -30, 0, 75)
-    directionButton.BackgroundColor3 = Color3.fromRGB(60, 60, 60)
-    directionButton.TextColor3 = Color3.new(1, 1, 1)
-    directionButton.Text = "ADELANTE"
-    directionButton.TextSize = 12
-    directionButton.Font = Enum.Font.GothamMedium
-    directionButton.BorderSizePixel = 1
-    directionButton.BorderColor3 = Color3.fromRGB(100, 100, 100)
-    directionButton.AutoButtonColor = true
-    directionButton.Visible = false
-    directionButton.ZIndex = 10
-    directionButton.Parent = container
-    
-    -- Indicador de desviación
-    local deviationBar = Instance.new("Frame")
-    deviationBar.Name = "DeviationBar"
-    deviationBar.Size = UDim2.new(0, 100, 0, 6)
-    deviationBar.Position = UDim2.new(0.5, -50, 0, 110)
-    deviationBar.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
-    deviationBar.BorderSizePixel = 1
-    deviationBar.BorderColor3 = Color3.fromRGB(60, 60, 60)
-    deviationBar.Visible = false
-    deviationBar.ZIndex = 9
-    deviationBar.Parent = container
-    
-    local deviationFill = Instance.new("Frame")
-    deviationFill.Name = "DeviationFill"
-    deviationFill.Size = UDim2.new(0, 0, 1, 0)
-    deviationFill.Position = UDim2.new(0, 0, 0, 0)
-    deviationFill.BackgroundColor3 = Color3.fromRGB(0, 170, 255)
-    deviationFill.BorderSizePixel = 0
-    deviationFill.ZIndex = 10
-    deviationFill.Parent = deviationBar
-    
-    return moonwalkGui
+local function disableMoonwalk()
+	moonwalk = false
+	if humanoid then
+		humanoid.AutoRotate = true
+	end
+	mwButton.BackgroundColor3 = Color3.fromRGB(35,35,35)
 end
 
--- Actualizar interfaz
-local function updateMoonwalkUI()
-    if not moonwalkButton or not directionButton then return end
-    
-    -- Botón principal
-    if moonwalkActive then
-        moonwalkButton.BackgroundColor3 = Color3.fromRGB(0, 170, 255)
-        moonwalkButton.BorderColor3 = Color3.fromRGB(0, 200, 255)
-        moonwalkButton.Text = "ON"
-    else
-        moonwalkButton.BackgroundColor3 = Color3.fromRGB(45, 45, 45)
-        moonwalkButton.BorderColor3 = Color3.fromRGB(80, 80, 80)
-        moonwalkButton.Text = "OFF"
-    end
-    
-    -- Botón de dirección
-    directionButton.Text = isMoonwalkForward and "ADELANTE" or "ATRÁS"
-    directionButton.BackgroundColor3 = isMoonwalkForward and 
-        Color3.fromRGB(0, 120, 200) or Color3.fromRGB(200, 80, 0)
-    
-    -- Barra de desviación
-    local deviationBar = moonwalkGui:FindFirstChild("MoonwalkContainer"):FindFirstChild("DeviationBar")
-    local deviationFill = deviationBar and deviationBar:FindFirstChild("DeviationFill")
-    if deviationFill then
-        local deviationPercent = math.abs(shortestAngleDifference(currentBodyYaw, baseDirection)) / MAX_DEVIATION
-        deviationFill.Size = UDim2.new(deviationPercent, 0, 1, 0)
-        deviationFill.BackgroundColor3 = deviationPercent > 0.8 and Color3.fromRGB(255, 80, 80) or
-                                        deviationPercent > 0.5 and Color3.fromRGB(255, 180, 0) or
-                                        Color3.fromRGB(0, 170, 255)
-    end
-end
+mwButton.MouseButton1Down:Connect(enableMoonwalk)
+mwButton.MouseButton1Up:Connect(disableMoonwalk)
+mwButton.MouseLeave:Connect(disableMoonwalk)
 
--- Mostrar/ocultar interfaz
-local function setMoonwalkUIVisible(visible)
-    if not moonwalkGui or not moonwalkGui.Parent then
-        createMoonwalkUI()
-    end
-    
-    moonwalkGui.Enabled = visible
-    
-    if moonwalkButton then
-        moonwalkButton.Visible = visible
-    end
-    
-    if directionButton then
-        directionButton.Visible = visible
-    end
-    
-    local deviationBar = moonwalkGui:FindFirstChild("MoonwalkContainer"):FindFirstChild("DeviationBar")
-    if deviationBar then
-        deviationBar.Visible = visible
-    end
-    
-    if not visible then
-        moonwalkActive = false
-    end
-    
-    updateMoonwalkUI()
-end
+dirButton.MouseButton1Click:Connect(function()
+	if facingMode == "Backward" then
+		facingMode = "Forward"
+		dirButton.Text = "↑"
+	else
+		facingMode = "Backward"
+		dirButton.Text = "↓"
+	end
+end)
 
--- Aplicar rotación al personaje (SOLO CUERPO, no dirección base)
-local function applyBodyRotation(char, bodyYaw)
-    if not char then return end
-    
-    local root = char:FindFirstChild("HumanoidRootPart")
-    local humanoid = char:FindFirstChildOfClass("Humanoid")
-    
-    if not (root and humanoid) then return end
-    
-    -- 1. Guardar posición y velocidad actual
-    local currentPos = root.Position
-    local currentVel = root.Velocity
-    
-    -- 2. Aplicar rotación del CUERPO
-    local newCFrame = CFrame.new(currentPos) * CFrame.Angles(0, math.rad(bodyYaw), 0)
-    root.CFrame = newCFrame
-    
-    -- 3. Restaurar velocidad (para mantener movimiento)
-    root.Velocity = currentVel
-    
-    -- 4. Desactivar rotación automática del humanoid
-    if moonwalkActive then
-        humanoid.AutoRotate = false
-    end
-end
+RunService.RenderStepped:Connect(function()
+	if not systemEnabled or not moonwalk or not humanoid or not root then return end
 
--- Actualizar dirección BASE del moonwalk
-local function updateBaseDirection()
-    local char = LP.Character
-    if not char then return end
-    
-    local root = char:FindFirstChild("HumanoidRootPart")
-    if not root then return end
-    
-    -- Obtener yaw actual del personaje
-    local currentYaw = getNormalizedYaw(root.CFrame)
-    
-    -- Si moonwalk está adelante, usar yaw actual
-    -- Si moonwalk está atrás, usar opuesto (180° diferencia)
-    if isMoonwalkForward then
-        baseDirection = currentYaw
-    else
-        baseDirection = normalizeAngle(currentYaw + 180)
-    end
-    
-    -- Asegurar que cuerpo empiece alineado con base
-    currentBodyYaw = baseDirection
-    targetBodyYaw = baseDirection
-end
+	local moveDir = humanoid.MoveDirection
 
--- Limpiar sistema moonwalk
-local function cleanupMoonwalk()
-    if moonwalkConnection then
-        moonwalkConnection:Disconnect()
-        moonwalkConnection = nil
-    end
-    
-    -- Restaurar estado normal
-    local char = LP.Character
-    if char then
-        local humanoid = char:FindFirstChildOfClass("Humanoid")
-        if humanoid then
-            humanoid.AutoRotate = true
-        end
-    end
-    
-    moonwalkActive = false
-    joystickX = 0
-    isManualDeviation = false
-    
-    setMoonwalkUIVisible(false)
-end
+	if moveDir.Magnitude < 0.05 then
+		currentYaw = currentYaw + (baseYaw - currentYaw) * returnSpeed
+	else
+		local cam = workspace.CurrentCamera
 
--- Procesar inputs de joystick/teclado
-local function processMovementInputs()
-    if not moonwalkActive then return end
-    
-    -- Resetear joystick
-    joystickX = 0
-    isManualDeviation = false
-    
-    -- Procesar teclado
-    if UIS:IsKeyDown(Enum.KeyCode.A) or UIS:IsKeyDown(Enum.KeyCode.Left) then
-        joystickX = -1
-        isManualDeviation = true
-    elseif UIS:IsKeyDown(Enum.KeyCode.D) or UIS:IsKeyDown(Enum.KeyCode.Right) then
-        joystickX = 1
-        isManualDeviation = true
-    end
-    
-    -- Procesar gamepad (si existe)
-    local gamepadState = UIS:GetGamepadState(Enum.UserInputType.Gamepad1)
-    if #gamepadState > 0 then
-        for _, input in ipairs(gamepadState) do
-            if input.KeyCode == Enum.KeyCode.Thumbstick1 then
-                local stickPos = input.Position
-                if math.abs(stickPos.X) > 0.2 then  -- Deadzone
-                    joystickX = stickPos.X
-                    isManualDeviation = true
-                end
-                break
-            end
-        end
-    end
-end
+		local camForward = Vector3.new(
+			cam.CFrame.LookVector.X, 0, cam.CFrame.LookVector.Z
+		).Unit
 
--- Calcular rotación objetivo del cuerpo
-local function calculateTargetBodyRotation()
-    if not isManualDeviation or math.abs(joystickX) < 0.1 then
-        -- Sin input: regresar a dirección base
-        return baseDirection
-    end
-    
-    -- Con input: calcular desviación desde base
-    local deviationAngle = joystickX * MAX_DEVIATION
-    local targetYaw = baseDirection + deviationAngle
-    
-    return normalizeAngle(targetYaw)
-end
+		local camRight = Vector3.new(
+			cam.CFrame.RightVector.X, 0, cam.CFrame.RightVector.Z
+		).Unit
 
--- Iniciar sistema moonwalk
-local function startMoonwalk()
-    cleanupMoonwalk()
-    
-    local char = LP.Character
-    if not char then return end
-    
-    local humanoid = char:FindFirstChildOfClass("Humanoid")
-    local root = char:FindFirstChild("HumanoidRootPart")
-    
-    if not (humanoid and root) then return end
-    
-    -- Establecer dirección base inicial
-    updateBaseDirection()
-    
-    -- Mostrar interfaz
-    setMoonwalkUIVisible(true)
-    updateMoonwalkUI()
-    
-    -- Eventos de botones
-    moonwalkButton.MouseButton1Click:Connect(function()
-        moonwalkActive = not moonwalkActive
-        
-        if moonwalkActive then
-            -- Actualizar dirección base al activar
-            updateBaseDirection()
-        else
-            -- Restaurar rotación automática al desactivar
-            humanoid.AutoRotate = true
-        end
-        
-        updateMoonwalkUI()
-    end)
-    
-    directionButton.MouseButton1Click:Connect(function()
-        isMoonwalkForward = not isMoonwalkForward
-        updateBaseDirection()
-        updateMoonwalkUI()
-    end)
-    
-    -- Loop principal del moonwalk
-    moonwalkConnection = RunService.RenderStepped:Connect(function(dt)
-        local currentChar = LP.Character
-        if not currentChar then return end
-        
-        local currentRoot = currentChar:FindFirstChild("HumanoidRootPart")
-        local currentHumanoid = currentChar:FindFirstChildOfClass("Humanoid")
-        
-        if not (currentRoot and currentHumanoid) then return end
-        
-        if moonwalkActive then
-            -- MOONWALK ACTIVO
-            
-            -- 1. Procesar inputs del usuario
-            processMovementInputs()
-            
-            -- 2. Calcular rotación objetivo del CUERPO
-            targetBodyYaw = calculateTargetBodyRotation()
-            
-            -- 3. Suavizar rotación actual hacia objetivo
-            currentBodyYaw = smoothAngleLerp(currentBodyYaw, targetBodyYaw, SMOOTH_FACTOR * dt)
-            
-            -- 4. Aplicar rotación al CUERPO
-            applyBodyRotation(currentChar, currentBodyYaw)
-            
-            -- 5. Actualizar UI
-            updateMoonwalkUI()
-            
-            -- 6. Forzar desactivación de AutoRotate
-            currentHumanoid.AutoRotate = false
-            
-        else
-            -- MODO NORMAL
-            currentHumanoid.AutoRotate = true
-        end
-    end)
-end
+		local forwardDot = camForward:Dot(moveDir)
+		local rightDot = camRight:Dot(moveDir)
 
--- Toggle para Rayfield
-SurvivorTab:CreateToggle({
-    Name = "Moonwalk Mode (Cuerpo ±30°, Mira base)",
-    CurrentValue = false,
-    Flag = "MoonwalkToggle",
-    Callback = function(enabled)
-        moonwalkEnabled = enabled
-        
-        if enabled then
-            startMoonwalk()
-            
-            -- Reconectar al respawnear
-            LP.CharacterAdded:Connect(function()
-                if moonwalkEnabled then
-                    task.wait(0.5)
-                    startMoonwalk()
-                end
-            end)
-        else
-            cleanupMoonwalk()
-        end
-    end
-})
+		local angle = math.deg(math.atan2(rightDot, forwardDot))
+		angle = math.clamp(angle, -maxTurn, maxTurn)
 
--- Inicializar
-task.spawn(function()
-    task.wait(2)
-    createMoonwalkUI()
+		currentYaw = baseYaw + angle
+	end
+
+	root.CFrame =
+		CFrame.new(root.Position) *
+		CFrame.Angles(0, math.rad(currentYaw), 0)
+end)
+
+SurvivorTab:CreateToggle("Moonwalk", function(state)
+	systemEnabled = state
+	gui.Enabled = state
+
+	if not state then
+		disableMoonwalk()
+	end
 end)
 
 -- ============================================
